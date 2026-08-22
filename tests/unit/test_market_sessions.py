@@ -1,9 +1,11 @@
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, timezone
 
+import pandas as pd
 import pytest
 
 from src.data.market_sessions import (
     exclude_incomplete_daily_bar,
+    exclude_incomplete_daily_dataframe,
     is_jakarta_market_open,
 )
 
@@ -78,3 +80,53 @@ def test_current_daily_bar_is_retained_on_weekend():
     )
 
     assert result == bars
+
+
+def test_incomplete_current_dataframe_row_is_excluded_while_market_open():
+    history = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(
+                ["2026-08-10", "2026-08-11", "2026-08-12"]
+            ),
+            "Close": [100, 101, 102],
+        }
+    )
+    as_of = datetime(2026, 8, 12, 8, 30, tzinfo=timezone.utc)
+
+    result = exclude_incomplete_daily_dataframe(
+        history,
+        as_of=as_of,
+    )
+
+    assert result["Date"].tolist() == [
+        pd.Timestamp("2026-08-10"),
+        pd.Timestamp("2026-08-11"),
+    ]
+
+
+def test_current_dataframe_row_is_retained_after_market_close():
+    history = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2026-08-11", "2026-08-12"]),
+            "Close": [101, 102],
+        }
+    )
+    as_of = datetime(2026, 8, 12, 9, 0, tzinfo=timezone.utc)
+
+    result = exclude_incomplete_daily_dataframe(
+        history,
+        as_of=as_of,
+    )
+
+    assert result.equals(history)
+
+
+def test_dataframe_without_date_column_raises_key_error():
+    history = pd.DataFrame({"Close": [100, 101]})
+    as_of = datetime(2026, 8, 12, 8, 30, tzinfo=timezone.utc)
+
+    with pytest.raises(KeyError, match="Expected date column"):
+        exclude_incomplete_daily_dataframe(
+            history,
+            as_of=as_of,
+        )

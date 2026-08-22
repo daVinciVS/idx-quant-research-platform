@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import datetime, time
 from typing import Iterable, TypeVar
 from zoneinfo import ZoneInfo
+
+import pandas as pd
 
 from src.data.dates import to_jakarta_date
 
@@ -16,7 +18,7 @@ def is_jakarta_market_open(
     as_of: datetime,
     market_close: time = IDX_REGULAR_CLOSE,
 ) -> bool:
-    """Return whether the Jakarta market session is still open on a weekday."""
+    """Return whether the Jakarta weekday session is still open."""
     if as_of.tzinfo is None:
         raise ValueError("as_of must be timezone-aware")
 
@@ -50,3 +52,29 @@ def exclude_incomplete_daily_bar(
         for bar in bar_list
         if to_jakarta_date(bar_date_getter(bar)) != jakarta_today
     ]
+
+
+def exclude_incomplete_daily_dataframe(
+    history: pd.DataFrame,
+    *,
+    as_of: datetime,
+    date_column: str = "Date",
+) -> pd.DataFrame:
+    """Return a copy excluding today's incomplete Jakarta daily bar."""
+    if date_column not in history.columns:
+        raise KeyError(
+            f"Expected date column '{date_column}' in history."
+        )
+
+    if history.empty:
+        return history.copy()
+
+    if not is_jakarta_market_open(as_of):
+        return history.copy()
+
+    jakarta_today = pd.Timestamp(to_jakarta_date(as_of))
+
+    return history.loc[
+        pd.to_datetime(history[date_column]).dt.normalize()
+        != jakarta_today
+    ].copy()
