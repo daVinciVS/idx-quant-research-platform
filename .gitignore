@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment variables, secrets, and credentials
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+*.pem
+*.key
+service_account*.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+
+# Application cache and generated outputs
+cache/
+output/
+outputs/
+reports/
+generated/
+downloads/
+
+# Private/manual market data
+data/raw/
+data/manual/
+data/private/
+data/cache/
+
+# Exported analysis files
+*.xlsx
+*.xls
+*.pdf
+
+# Local archives and historical backup scripts
+*.zip
+*_before_*.py
+README.txt
+
+# Ignore all local project data for the initial repository audit
+data/
+
+# Explicitly ignore local Python environment
+.venv/
