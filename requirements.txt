@@ -4,3 +4,4 @@ pandas
 python-dotenv
 requests
 yfinance
+pytest==9.1.1
