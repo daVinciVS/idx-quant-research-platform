@@ -72,3 +72,25 @@ A behavior change is complete when:
 
 4\. The branch is pushed to GitHub.
 
+## Manual smoke-test record
+
+### 2026-08-24 — Single-stock workflow
+
+- Command: `python .\generate_report.py`
+- Workflow: `1` — Single Stock Deep-Dive Report
+- Ticker: `BBCA`
+- Data source: Yahoo-only analysis
+- Result: Passed
+
+Validation observed:
+
+- Yahoo Finance daily price data loaded successfully.
+- IHSG benchmark data loaded successfully.
+- 479 daily records were processed.
+- Indicators and report metrics were calculated.
+- The Excel dashboard report was generated successfully.
+- The PDF summary was generated successfully.
+- No errors occurred in Jakarta date normalization, session-aware candle filtering, or DataFrame handling.
+
+This smoke test supplements the automated unit-test suite; it does not replace integration tests.
+
