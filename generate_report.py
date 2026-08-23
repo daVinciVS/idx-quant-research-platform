@@ -23,6 +23,7 @@ from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.drawing.image import Image as OpenpyxlImage
+from src.analytics.trade_plan import calculate_trade_plan
 from src.data.market_sessions import exclude_incomplete_daily_dataframe
 
 # ============================================================
@@ -3082,78 +3083,36 @@ class AnalyticsEngine:
         breakout_target_2 = np.nan
         breakout_rrr = np.nan
 
-        if pd.notna(atr14):
-            # Pullback entry zone:
-            # Up to half an ATR below the current close.
-            pullback_entry_low = max(
-                close - (0.5 * atr14),
-                0,
-            )
-
-            pullback_entry_high = close
-
-            # Pullback risk and targets:
-            # Stop = 2 ATR below current close.
-            pullback_stop_loss = close - (2 * atr14)
-
-            # Target 1 must be above the entry price.
-            pullback_target_1 = max(
-                resistance,
-                close + (1.5 * atr14),
-            )
-
-            # Target 2 is the larger of:
-            # 6M high or 3 ATR above entry.
-            pullback_target_2 = max(
-                six_month_high,
-                close + (3 * atr14),
-            )
-
-            if close > pullback_stop_loss:
-                pullback_rrr = (
-                    (pullback_target_2 - close)
-                    / (
-                        close
-                        - pullback_stop_loss
-                    )
+        if (
+            pd.notna(atr14)
+            and pd.notna(resistance)
+            and pd.notna(six_month_high)
+        ):
+            try:
+                trade_plan = calculate_trade_plan(
+                    close=float(close),
+                    atr14=float(atr14),
+                    resistance=float(resistance),
+                    six_month_high=float(six_month_high),
                 )
-
-            # Breakout entry:
-            # Use 20-day resistance as the trigger level.
-            # The user enters only if price closes above it.
-            breakout_entry = resistance
-
-            # Breakout stop:
-            # Tighter than pullback because entry occurs after confirmation.
-            breakout_stop_loss = (
-                breakout_entry
-                - (1.5 * atr14)
-            )
-
-            # Critical fix:
-            # Targets are calculated FROM breakout entry.
-            # Therefore Target 1 can never equal breakout entry.
-            breakout_target_1 = (
-                breakout_entry
-                + (1.5 * atr14)
-            )
-
-            breakout_target_2 = (
-                breakout_entry
-                + (3.0 * atr14)
-            )
-
-            if breakout_entry > breakout_stop_loss:
-                breakout_rrr = (
-                    (
-                        breakout_target_2
-                        - breakout_entry
-                    )
-                    / (
-                        breakout_entry
-                        - breakout_stop_loss
-                    )
+            except (TypeError, ValueError) as error:
+                logger.warning(
+                    "Trade plan unavailable due to invalid inputs: %s",
+                    error,
                 )
+            else:
+                pullback_entry_low = trade_plan.pullback_entry_low
+                pullback_entry_high = trade_plan.pullback_entry_high
+                pullback_stop_loss = trade_plan.pullback_stop_loss
+                pullback_target_1 = trade_plan.pullback_target_1
+                pullback_target_2 = trade_plan.pullback_target_2
+                pullback_rrr = trade_plan.pullback_rrr
+
+                breakout_entry = trade_plan.breakout_entry
+                breakout_stop_loss = trade_plan.breakout_stop_loss
+                breakout_target_1 = trade_plan.breakout_target_1
+                breakout_target_2 = trade_plan.breakout_target_2
+                breakout_rrr = trade_plan.breakout_rrr
 
         # Keep these aliases temporarily so older dashboard
         # components continue to work before we redesign Tab 2.
