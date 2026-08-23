@@ -64,7 +64,7 @@ data/cache/
 README.txt
 
 # Ignore all local project data for the initial repository audit
-data/
+/data/
 
 # Explicitly ignore local Python environment
 .venv/

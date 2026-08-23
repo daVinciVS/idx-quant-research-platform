@@ -5,6 +5,7 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from pdf_reporter import generate_pdf_report
 from typing import Any
@@ -22,7 +23,7 @@ from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.drawing.image import Image as OpenpyxlImage
-
+from src.data.market_sessions import exclude_incomplete_daily_dataframe
 
 # ============================================================
 # PROJECT CONFIGURATION
@@ -160,22 +161,18 @@ class StockDataFetcher:
         if history.empty:
             return history.copy()
 
-        jakarta_today = (
-            pd.Timestamp.now(
-                tz="Asia/Jakarta"
-            )
-            .tz_localize(None)
-            .normalize()
-        )
+        as_of = datetime.now(tz=ZoneInfo("Asia/Jakarta"))
 
-        completed_history = history[
-            history["Date"] < jakarta_today
-        ].copy()
+        completed_history = exclude_incomplete_daily_dataframe(
+            history,
+            as_of=as_of,
+            date_column="Date",
+        )
 
         if len(completed_history) < len(history):
             logger.info(
                 "Excluded incomplete current-day candle: %s",
-                jakarta_today.strftime("%Y-%m-%d"),
+                as_of.strftime("%Y-%m-%d"),
             )
 
         return completed_history
@@ -336,7 +333,7 @@ class StockDataFetcher:
             )
 
             benchmark = self.clean_history(benchmark)
-
+            
             if benchmark.empty:
                 return pd.DataFrame(
                     columns=["Date", "IHSG Close"]
