@@ -94,3 +94,26 @@ Validation observed:
 
 This smoke test supplements the automated unit-test suite; it does not replace integration tests.
 
+### 2026-08-24 — Trade-plan module integration
+
+- Command: `python .\generate_report.py`
+- Workflow: `1` — Single Stock Deep-Dive Report
+- Ticker: `BBCA`
+- Data source: Yahoo-only analysis
+- Result: Passed
+
+Validation observed:
+
+- `src.analytics.trade_plan.calculate_trade_plan()` was integrated into
+  `AnalyticsEngine.calculate_metrics()`.
+- The report ran successfully with valid ATR, resistance, and six-month-high inputs.
+- Pullback and breakout plan fields were available to the report workflow.
+- Excel dashboard report was generated successfully.
+- PDF summary was generated successfully.
+- No errors occurred in trade-plan calculation, report generation, or
+  output handling.
+
+Automated validation:
+
+- `python -m pytest -v` → 29 passed
+- `python -m py_compile .\generate_report.py` → passed
