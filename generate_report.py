@@ -22,6 +22,11 @@ from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from pdf_reporter import generate_pdf_report
+from src.analytics.decision import (
+    DecisionInputs,
+    RiskCategory,
+    evaluate_trade_decision,
+)
 from src.analytics.trade_plan import calculate_trade_plan
 from src.data.contracts import DataContractError, validate_ohlcv
 from src.data.market_sessions import exclude_incomplete_daily_dataframe
@@ -3588,6 +3593,104 @@ class AnalyticsEngine:
         }  
 
 
+    def load_backtest_validation(
+        self,
+        ticker: str,
+    ) -> dict[str, Any] | None:
+        """Load saved local backtest metrics for one ticker."""
+        ticker_code = ticker.replace(".JK", "").upper()
+        metrics_path = (
+            OUTPUT_DIR
+            / "backtests"
+            / f"{ticker_code}_metrics.json"
+        )
+
+        if not metrics_path.exists():
+            return None
+
+        try:
+            with metrics_path.open(
+                "r",
+                encoding="utf-8",
+            ) as file:
+                validation = json.load(file)
+
+        except (OSError, json.JSONDecodeError) as error:
+            logger.warning(
+                "Could not read saved backtest metrics for %s: %s",
+                ticker_code,
+                error,
+            )
+            return None
+
+        if not isinstance(validation, dict):
+            logger.warning(
+                "Saved backtest metrics for %s are invalid.",
+                ticker_code,
+            )
+            return None
+
+        return validation
+
+    def build_backtest_validation_summary(
+        self,
+        validation: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Normalize saved backtest metrics into display-ready values."""
+        strategy = validation.get("strategy")
+        benchmark = validation.get("benchmark_IHSG")
+
+        if not isinstance(strategy, dict) or not strategy:
+            raise ValueError(
+                "Saved backtest metrics need a non-empty strategy section."
+            )
+
+        if not isinstance(benchmark, dict) or not benchmark:
+            raise ValueError(
+                "Saved backtest metrics need a non-empty benchmark_IHSG section."
+            )
+
+        strategy_return = float(
+            strategy.get("cumulative_return_pct", 0.0)
+        )
+        benchmark_return = float(
+            benchmark.get("cumulative_return_pct", 0.0)
+        )
+        num_trades = int(validation.get("num_trades", 0))
+
+        warnings: list[str] = []
+
+        if num_trades < 20:
+            warnings.append(
+                "Small sample: fewer than 20 completed trades."
+            )
+
+        if strategy_return < benchmark_return:
+            warnings.append(
+                "Strategy underperformed the matched IHSG benchmark."
+            )
+
+        return {
+            "test_observations": int(
+                validation.get("test_observations", 0)
+            ),
+            "num_trades": num_trades,
+            "holding_period_days": int(
+                validation.get("holding_period_days", 0)
+            ),
+            "round_trip_cost_pct": float(
+                validation.get("round_trip_cost_pct", 0.0)
+            ),
+            "strategy_return_pct": strategy_return,
+            "benchmark_return_pct": benchmark_return,
+            "excess_return_pct": strategy_return - benchmark_return,
+            "strategy_sharpe_ratio": strategy.get("sharpe_ratio"),
+            "strategy_max_drawdown_pct": strategy.get(
+                "max_drawdown_pct"
+            ),
+            "warnings": warnings,
+        }
+
 # ============================================================
 # EXCEL REPORT BUILDER
 # ============================================================
@@ -4447,13 +4550,53 @@ class ExcelReportBuilder:
         self.set_section_title(
             ws,
             17,
+            "Swing Decision Guide",
+            4,
+        )
+
+        decision_reasons = metrics.get("decision_reasons", [])
+        decision_next_action = metrics.get(
+            "decision_next_action",
+            "Review the report before taking action.",
+        )
+        decision_confidence = metrics.get(
+            "decision_confidence",
+            metrics.get("confidence", "N/A"),
+        )
+
+        ws.cell(18, 1, "Decision")
+        ws.cell(18, 2, metrics["decision"])
+        ws.cell(18, 3, "Confidence")
+        ws.cell(18, 4, decision_confidence
+
+        )
+
+        ws.cell(19, 1, "Next Action")
+        ws.cell(19, 2, decision_next_action)
+        ws.merge_cells(start_row=19, start_column=2, end_row=19, end_column=4)
+
+        for row, reason in enumerate(decision_reasons, start=20):
+            ws.cell(row, 1, "Reason")
+            ws.cell(row, 2, reason)
+            ws.merge_cells(
+                start_row=row,
+                start_column=2,
+                end_row=row,
+                end_column=4,
+            )
+
+        evidence_start = 21 + len(decision_reasons)
+
+        self.set_section_title(
+            ws,
+            evidence_start - 1,
             "Why This Decision?",
             4,
         )
 
         self.set_header(
             ws,
-            18,
+            evidence_start,
             [
                 "Pillar",
                 "Result",
@@ -4462,11 +4605,9 @@ class ExcelReportBuilder:
             ],
         )
 
-        evidence_start = 19
-
         for row, evidence in enumerate(
             metrics["evidence"],
-            start=evidence_start,
+            start=evidence_start + 1,
         ):
             ws.cell(row, 1, evidence[0])
             ws.cell(row, 2, evidence[1])
@@ -4498,7 +4639,7 @@ class ExcelReportBuilder:
 
         risk_start = evidence_start + len(
             metrics["evidence"]
-        ) + 2
+        ) + 3
 
         self.set_section_title(
             ws,
@@ -6605,6 +6746,47 @@ def main(
             report_df,
         )
 
+        decision_inputs = DecisionInputs(
+            has_sufficient_data=metrics["data_coverage_percent"] >= 60,
+            trend_template_passed=bool(metrics["minervini_passed"]),
+            relative_strength_positive=(
+                "OUTPERFORMING" in str(
+                    metrics["relative_strength_signal"]
+                ).upper()
+                or "BULLISH" in str(
+                    metrics["relative_strength_signal"]
+                ).upper()
+                or "POSITIVE" in str(
+                    metrics["relative_strength_signal"]
+                ).upper()
+            ),
+            wyckoff_phase=str(metrics["wyckoff_phase"]),
+            extension_risk=metrics["extension_risk_status"] != "NORMAL",
+            risk_reward_ratio=metrics["pullback_rrr"],
+            risk_category=(
+                RiskCategory.SAFE
+                if metrics["risk_label"] == "SAFE (Bluechip / Liquid)"
+                else (
+                    RiskCategory.MODERATE
+                    if metrics["risk_label"]
+                    == "MODERATE RISK (Second Liner)"
+                    else (
+                        RiskCategory.EXTREME
+                        if metrics["risk_label"]
+                        == "EXTREME RISK (Saham Gorengan)"
+                        else RiskCategory.UNKNOWN
+                    )
+                )
+            ),
+        )
+
+        trade_decision = evaluate_trade_decision(decision_inputs)
+
+        metrics["decision"] = trade_decision.label.value
+        metrics["decision_confidence"] = trade_decision.confidence
+        metrics["decision_reasons"] = list(trade_decision.reasons)
+        metrics["decision_next_action"] = trade_decision.next_action
+
         generated_datetime = datetime.now()
 
         generated_at_display = generated_datetime.strftime(
@@ -6704,6 +6886,14 @@ def main(
         print(f"Company: {fundamentals['name']}")
         print(f"Latest Close: {metrics['latest_close']:,.2f}")
         print(f"Decision: {metrics['decision']}")
+        print(f"Decision confidence: {metrics['decision_confidence']}")
+        print("Why this decision:")
+
+        for reason in metrics["decision_reasons"]:
+            print(f"  - {reason}")
+
+        print("Suggested next action:")
+        print(f"  {metrics['decision_next_action']}")
         print(
             "Raw Score: "
             f"{metrics['raw_score']} / "
@@ -6755,6 +6945,94 @@ def main(
             f"{metrics['extension_risk_status']}"
         )
         print(f"Risk: {metrics['risk_label']}")
+
+        validation = analytics.load_backtest_validation(
+            yahoo_data.ticker,
+        )
+
+        print()
+        print("=" * 68)
+        print("HISTORICAL BACKTEST VALIDATION")
+        print("=" * 68)
+
+        if validation is None:
+            print("Status: NOT AVAILABLE")
+            print(
+                "Run `python run_trade_backtest.py` for this ticker "
+                "to generate local validation artifacts."
+            )
+        else:
+            try:
+                validation_summary = (
+                    analytics.build_backtest_validation_summary(
+                        validation
+                    )
+                )
+
+            except (TypeError, ValueError) as error:
+                print("Status: INVALID SAVED RESULT")
+                print(f"Reason: {error}")
+
+            else:
+                print("Status: AVAILABLE")
+                print(
+                    "Test observations: "
+                    f"{validation_summary['test_observations']}"
+                )
+                print(
+                    "Completed trades: "
+                    f"{validation_summary['num_trades']}"
+                )
+                print(
+                    "Holding period: "
+                    f"{validation_summary['holding_period_days']} sessions"
+                )
+                print(
+                    "Modeled round-trip cost: "
+                    f"{validation_summary['round_trip_cost_pct']:.2f}%"
+                )
+                print()
+                print(
+                    "Strategy cumulative return: "
+                    f"{validation_summary['strategy_return_pct']:.2f}%"
+                )
+                print(
+                    "IHSG cumulative return: "
+                    f"{validation_summary['benchmark_return_pct']:.2f}%"
+                )
+                print(
+                    "Excess return versus IHSG: "
+                    f"{validation_summary['excess_return_pct']:.2f}%"
+                )
+
+                sharpe_ratio = validation_summary[
+                    "strategy_sharpe_ratio"
+                ]
+
+                if sharpe_ratio is not None:
+                    print(
+                        "Strategy Sharpe ratio: "
+                        f"{float(sharpe_ratio):.2f}"
+                    )
+
+                maximum_drawdown = validation_summary[
+                    "strategy_max_drawdown_pct"
+                ]
+
+                if maximum_drawdown is not None:
+                    print(
+                        "Strategy maximum drawdown: "
+                        f"{float(maximum_drawdown):.2f}%"
+                    )
+
+                warnings = validation_summary["warnings"]
+
+                if warnings:
+                    print()
+                    print("Validation warnings:")
+
+                    for warning in warnings:
+                        print(f"  - {warning}")
         print()
         print("Generated Excel file:")
         print(output_file)

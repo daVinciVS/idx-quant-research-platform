@@ -649,6 +649,10 @@ def run_walk_forward_backtest(
             test_index + 1 + future_horizon_days
         ].copy()
 
+        next_day_open = numeric_value(
+            next_day["Open"]
+        )
+
         next_day_close = numeric_value(
             next_day["Close"]
         )
@@ -740,6 +744,8 @@ def run_walk_forward_backtest(
                     -1
                 ]["Date"],
                 "Close At Signal": close_price,
+                "Next-Day Open": next_day_open,
+                "Fifth-Day Close": fifth_day_close,
                 "ATR14": atr14,
                 "Signal Score": signal_score,
                 "Score Bucket": score_bucket(
