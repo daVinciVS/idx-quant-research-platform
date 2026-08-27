@@ -4448,6 +4448,46 @@ class ExcelReportBuilder:
         self.set_section_title(
             ws,
             17,
+            "Swing Decision Guide",
+            4,
+        )
+
+        decision_reasons = metrics.get("decision_reasons", [])
+        decision_next_action = metrics.get(
+            "decision_next_action",
+            "Review the report before taking action.",
+        )
+        decision_confidence = metrics.get(
+            "decision_confidence",
+            metrics.get("confidence", "N/A"),
+        )
+
+        ws.cell(18, 1, "Decision")
+        ws.cell(18, 2, metrics["decision"])
+        ws.cell(18, 3, "Confidence")
+        ws.cell(18, 4, decision_confidence
+
+        )
+
+        ws.cell(19, 1, "Next Action")
+        ws.cell(19, 2, decision_next_action)
+        ws.merge_cells(start_row=19, start_column=2, end_row=19, end_column=4)
+
+        for row, reason in enumerate(decision_reasons, start=20):
+            ws.cell(row, 1, "Reason")
+            ws.cell(row, 2, reason)
+            ws.merge_cells(
+                start_row=row,
+                start_column=2,
+                end_row=row,
+                end_column=4,
+            )
+
+        evidence_start = 21 + len(decision_reasons)
+
+        self.set_section_title(
+            ws,
+            evidence_start - 1,
             "Why This Decision?",
             4,
         )
@@ -4462,8 +4502,6 @@ class ExcelReportBuilder:
                 "Evidence",
             ],
         )
-
-        evidence_start = 19
 
         for row, evidence in enumerate(
             metrics["evidence"],

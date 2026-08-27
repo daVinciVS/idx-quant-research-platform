@@ -100,6 +100,14 @@ def p(value: Any, style: ParagraphStyle) -> Paragraph:
         style,
     )
 
+def multiline_p(lines: list[str], style: ParagraphStyle) -> Paragraph:
+    """Render trusted internal lines as a multi-line PDF paragraph."""
+    text = "<br/>".join(
+        escape(safe_text(line))
+        for line in lines
+    )
+
+    return Paragraph(text, style)
 
 def metric_box(
     label: str,
@@ -305,10 +313,6 @@ def generate_pdf_report(
 
     extension_status = safe_text(
         metrics.get("extension_risk_status")
-    )
-
-    extension_reason = safe_text(
-        metrics.get("extension_risk_reason")
     )
 
     risk_label = safe_text(
@@ -604,41 +608,48 @@ def generate_pdf_report(
         )
     )
 
-    if "EXTENDED" in extension_status.upper():
-        action_text = (
-            "The broader technical structure remains constructive, "
-            "but the current price is extended from the preferred "
-            "short-term entry area. Do not chase; wait for either a "
-            "controlled pullback or a fresh volume-confirmed breakout."
+    decision_confidence = safe_text(
+        metrics.get(
+            "decision_confidence",
+            metrics.get("confidence"),
         )
-    elif minervini_passed:
-        action_text = (
-            "Trend structure meets the model's long-term requirements. "
-            "Evaluate entry only if price action, volume, and defined "
-            "risk parameters remain aligned with the trade plan."
+    )
+
+    decision_reasons = metrics.get("decision_reasons", [])
+    decision_next_action = safe_text(
+        metrics.get("decision_next_action")
+    )
+
+    if decision_next_action == "N/A":
+        decision_next_action = (
+            "Review the technical setup, risk parameters, and market context "
+            "before taking action."
         )
+
+    if decision_reasons:
+        decision_reason_lines = [
+            f"- {safe_text(reason)}"
+            for reason in decision_reasons
+        ]
     else:
-        action_text = (
-            "The long-term trend structure does not meet the model's "
-            "minimum requirements. Avoid initiating a new swing "
-            "position until the technical structure improves."
-        )
+        decision_reason_lines = [
+            "No standardized decision reasons were available for this report."
+        ]
+
+    action_text = (
+        f"{decision} — Confidence: {decision_confidence}. "
+        f"{decision_next_action}"
+    )
 
     view_table = Table(
         [
             [
                 p("ANALYST VIEW", body_bold_style),
-                p("KEY WATCH ITEM", body_bold_style),
+                p("DECISION REASONS", body_bold_style),
             ],
             [
                 p(action_text, body_style),
-                p(
-                    (
-                        f"Extension status: {extension_status}. "
-                        f"{extension_reason}"
-                    ),
-                    body_style,
-                ),
+                multiline_p(decision_reason_lines, body_style),
             ],
         ],
         colWidths=[9.35 * cm, 9.35 * cm],
