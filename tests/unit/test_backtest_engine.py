@@ -1,5 +1,5 @@
 import pytest
-from src.research.backtest_engine import simulate_trade, TradeCostConfig
+from src.research.backtest_engine import TradeCostConfig, simulate_trade
 
 
 def test_bullish_trade_calculates_net_return_after_costs():
