@@ -7,25 +7,23 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from openpyxl.styles import Font, PatternFill
-
 from run_predictor import (
     calculate_projection_signals,
     calculate_scenarios,
 )
 
-
 try:
     from __main__ import (
-        AnalyticsEngine,
         OUTPUT_DIR,
+        AnalyticsEngine,
         StockDataFetcher,
         logger,
     )
 
 except ImportError:
     from generate_report import (
-        AnalyticsEngine,
         OUTPUT_DIR,
+        AnalyticsEngine,
         StockDataFetcher,
         logger,
     )
@@ -216,9 +214,7 @@ def build_quality_filter_summary(
         results_df["Signal Score"] >= 4
     )
 
-    minervini_passed = (
-        results_df["Minervini Passed"] == True
-    )
+    minervini_passed = results_df["Minervini Passed"]
 
     normal_extension = (
         results_df["Extension Risk"]

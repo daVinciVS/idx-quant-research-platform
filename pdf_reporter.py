@@ -1,5 +1,4 @@
 import math
-
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -17,7 +16,6 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
-
 
 NAVY = colors.HexColor("#102A43")
 BLUE = colors.HexColor("#1F4E78")

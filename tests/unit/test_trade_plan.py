@@ -1,7 +1,6 @@
 import math
 
 import pytest
-
 from src.analytics.trade_plan import calculate_trade_plan
 
 

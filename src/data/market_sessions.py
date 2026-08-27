@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, time
-from typing import Iterable, TypeVar
+from typing import TypeVar
 from zoneinfo import ZoneInfo
 
 import pandas as pd

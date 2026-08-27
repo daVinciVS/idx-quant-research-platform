@@ -1,7 +1,6 @@
 from datetime import date, datetime, timezone
 
 import pytest
-
 from src.data.dates import to_jakarta_date
 
 

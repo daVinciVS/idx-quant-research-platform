@@ -1,28 +1,27 @@
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from zoneinfo import ZoneInfo
 from pathlib import Path
-from pdf_reporter import generate_pdf_report
 from typing import Any
+from zoneinfo import ZoneInfo
 
+import mplfinance as mpf
 import numpy as np
 import pandas as pd
-import yfinance as yf
-import mplfinance as mpf
 import requests
+import yfinance as yf
 from dotenv import load_dotenv
-
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
+from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.drawing.image import Image as OpenpyxlImage
+from pdf_reporter import generate_pdf_report
 from src.analytics.trade_plan import calculate_trade_plan
 from src.data.contracts import DataContractError, validate_ohlcv
 from src.data.market_sessions import exclude_incomplete_daily_dataframe
@@ -1043,11 +1042,11 @@ class IndexAlphaBrokerFetcher:
                 sign = "+" if net_value >= 0 else ""
 
                 formatted_brokers.append(
-                    (
+                    
                         f"{broker_code} "
                         f"({sign}IDR "
                         f"{value_in_billions:,.2f}B)"
-                    )
+                    
                 )
 
             return ", ".join(formatted_brokers)
@@ -1188,21 +1187,21 @@ class ManualMiraeDataLoader:
                 sign = "+" if net_value >= 0 else ""
 
                 formatted.append(
-                    (
+                    
                         f"{broker_code} "
                         f"({sign}IDR "
                         f"{value_billions:,.2f}B)"
-                    )
+                    
                 )
             else:
                 sign = "+" if net_volume >= 0 else ""
 
                 formatted.append(
-                    (
+                    
                         f"{broker_code} "
                         f"({sign}"
                         f"{net_volume:,.0f} sh)"
-                    )
+                    
                 )
 
         return ", ".join(formatted)
@@ -2297,7 +2296,6 @@ class AnalyticsEngine:
         latest = df.iloc[-1]
 
         close = latest["Close"]
-        sma20 = latest["SMA20"]
         sma50 = latest["SMA50"]
         sma200 = latest["SMA200"]
 

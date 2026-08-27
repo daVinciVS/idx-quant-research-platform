@@ -20,21 +20,25 @@ from openpyxl.styles import Font, PatternFill
 
 try:
     from __main__ import (
-        AnalyticsEngine,
         DATA_DIR,
         OUTPUT_DIR,
+        AnalyticsEngine,
         StockDataFetcher,
         logger,
+    )
+    from __main__ import (
         main as run_single_stock_report,
     )
 
 except ImportError:
     from generate_report import (
-        AnalyticsEngine,
         DATA_DIR,
         OUTPUT_DIR,
+        AnalyticsEngine,
         StockDataFetcher,
         logger,
+    )
+    from generate_report import (
         main as run_single_stock_report,
     )
 

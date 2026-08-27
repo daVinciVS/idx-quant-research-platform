@@ -1,6 +1,5 @@
 import pandas as pd
 import pytest
-
 from src.data.contracts import DataContractError, validate_ohlcv
 
 
