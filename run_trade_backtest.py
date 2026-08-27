@@ -23,31 +23,88 @@ from src.research.metrics import (
 OUTPUT_DIR = Path("output/backtests")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+HOLDING_PERIOD_DAYS = 5
+COST_BPS_PER_SIDE = 20.0
+INITIAL_EQUITY = 100.0
 
-def build_trade_and_benchmark_returns(
+
+def benchmark_return_for_trade(
+    benchmark_df: pd.DataFrame,
+    entry_date: pd.Timestamp,
+    exit_date: pd.Timestamp,
+) -> float:
+    """Return IHSG close-to-close percentage return for one trade window."""
+    benchmark_at_entry = benchmark_df[
+        benchmark_df["Date"] <= entry_date
+    ]
+    benchmark_at_exit = benchmark_df[
+        benchmark_df["Date"] <= exit_date
+    ]
+
+    if benchmark_at_entry.empty or benchmark_at_exit.empty:
+        return 0.0
+
+    entry_close = numeric_value(
+        benchmark_at_entry.iloc[-1]["IHSG Close"]
+    )
+    exit_close = numeric_value(
+        benchmark_at_exit.iloc[-1]["IHSG Close"]
+    )
+
+    if entry_close <= 0 or exit_close <= 0:
+        return 0.0
+
+    return ((exit_close / entry_close) - 1) * 100
+
+
+def build_trade_ledger(
     results_df: pd.DataFrame,
     benchmark_df: pd.DataFrame,
-) -> tuple[list[float], list[float]]:
+) -> pd.DataFrame:
     """
-    Convert backtest rows into non-overlapping trades and
-    matched IHSG benchmark returns over the same holding windows.
+    Build a non-overlapping, long-only ledger from walk-forward signals.
+
+    Signals are formed at the signal-date close. A position is entered at
+    the next-session open, held for five sessions, and exited at the fifth
+    session close. Each side incurs the configured transaction cost.
     """
-    cost_config = TradeCostConfig(cost_bps_per_side=20.0)
-    trade_returns: list[float] = []
-    benchmark_returns: list[float] = []
+    required_result_columns = {
+        "As Of Date",
+        "Projected Next Session",
+        "Projected 5D End Date",
+        "Next-Day Open",
+        "Fifth-Day Close",
+        "Signal Score",
+    }
+    required_benchmark_columns = {"Date", "IHSG Close"}
 
-    holding_period_days = 5
-    next_available_index = 0
+    if not required_result_columns.issubset(results_df.columns):
+        missing = sorted(
+            required_result_columns.difference(results_df.columns)
+        )
+        raise ValueError(
+            f"Backtest results are missing required columns: {missing}"
+        )
 
-    # Ensure benchmark has the expected columns.
-    if not {"Date", "IHSG Close"}.issubset(benchmark_df.columns):
-        return [], []
+    if not required_benchmark_columns.issubset(benchmark_df.columns):
+        missing = sorted(
+            required_benchmark_columns.difference(benchmark_df.columns)
+        )
+        raise ValueError(
+            f"Benchmark data is missing required columns: {missing}"
+        )
 
+    cost_config = TradeCostConfig(
+        cost_bps_per_side=COST_BPS_PER_SIDE
+    )
     benchmark_df = benchmark_df.sort_values("Date").reset_index(drop=True)
+    ledger_rows: list[dict[str, float | int | str]] = []
+    next_available_index = 0
+    strategy_equity = INITIAL_EQUITY
+    benchmark_equity = INITIAL_EQUITY
 
-    for idx, row in results_df.reset_index(drop=True).iterrows():
-        # Enforce non-overlapping positions: skip days inside an open trade.
-        if idx < next_available_index:
+    for index, row in results_df.reset_index(drop=True).iterrows():
+        if index < next_available_index:
             continue
 
         signal_score = int(row["Signal Score"])
@@ -64,161 +121,236 @@ def build_trade_and_benchmark_returns(
         if trade is None:
             continue
 
-        # Strategy trade return.
-        trade_returns.append(trade.net_return_pct)
-        next_available_index = idx + holding_period_days
-
-        # Matched benchmark return for the same window.
-        entry_date = pd.to_datetime(row["As Of Date"])
+        signal_date = pd.to_datetime(row["As Of Date"])
+        entry_date = pd.to_datetime(row["Projected Next Session"])
         exit_date = pd.to_datetime(row["Projected 5D End Date"])
 
-        entry_idx = benchmark_df[
-            benchmark_df["Date"] <= entry_date
-        ].index.max()
-
-        exit_idx = benchmark_df[
-            benchmark_df["Date"] <= exit_date
-        ].index.max()
-
-        if (
-            pd.isna(entry_idx)
-            or pd.isna(exit_idx)
-            or entry_idx == exit_idx
-        ):
-            benchmark_returns.append(0.0)
-            continue
-
-        entry_close = numeric_value(
-            benchmark_df.iloc[entry_idx]["IHSG Close"]
-        )
-        exit_close = numeric_value(
-            benchmark_df.iloc[exit_idx]["IHSG Close"]
+        benchmark_return_pct = benchmark_return_for_trade(
+            benchmark_df,
+            entry_date,
+            exit_date,
         )
 
-        if entry_close <= 0 or exit_close <= 0:
-            benchmark_returns.append(0.0)
-            continue
+        strategy_equity *= 1 + (trade.net_return_pct / 100)
+        benchmark_equity *= 1 + (benchmark_return_pct / 100)
 
-        benchmark_return_pct = (
-            (exit_close / entry_close) - 1
-        ) * 100
+        ledger_rows.append(
+            {
+                "signal_date": signal_date.date().isoformat(),
+                "entry_date": entry_date.date().isoformat(),
+                "exit_date": exit_date.date().isoformat(),
+                "signal_score": signal_score,
+                "entry_price": round(trade.entry_price, 2),
+                "exit_price": round(trade.exit_price, 2),
+                "gross_return_pct": round(trade.gross_return_pct, 4),
+                "round_trip_cost_pct": round(
+                    COST_BPS_PER_SIDE * 2 / 100,
+                    4,
+                ),
+                "net_return_pct": round(trade.net_return_pct, 4),
+                "strategy_equity": round(strategy_equity, 4),
+                "ihsg_return_pct": round(benchmark_return_pct, 4),
+                "benchmark_equity": round(benchmark_equity, 4),
+            }
+        )
 
-        benchmark_returns.append(benchmark_return_pct)
+        next_available_index = index + HOLDING_PERIOD_DAYS
 
-    return trade_returns, benchmark_returns
-
-
-def build_equity_curve(returns_pct: list[float]) -> list[float]:
-    """Compound returns into an equity index starting at 100."""
-    equity = [100.0]
-
-    for r in returns_pct:
-        equity.append(equity[-1] * (1 + r / 100))
-
-    return equity
+    return pd.DataFrame(ledger_rows)
 
 
-def main() -> None:
-    ticker = input("Ticker to backtest (e.g. BBCA): ").strip().upper()
-    test_days = int(input("Number of test days (e.g. 250): ").strip())
+def build_equity_curve(
+    ledger_df: pd.DataFrame,
+    column_name: str,
+) -> list[float]:
+    """Return an equity curve including its initial base value."""
+    if ledger_df.empty:
+        return [INITIAL_EQUITY]
 
-    # Predictor walk-forward backtest (strategy signals).
-    results_df, _, _ = run_walk_forward_backtest(ticker, test_days)
+    return [
+        INITIAL_EQUITY,
+        *ledger_df[column_name].astype(float).tolist(),
+    ]
 
-    # Fetch and validate IHSG benchmark data via existing engine.
-    fetcher = StockDataFetcher()
-    yahoo_data = fetcher.fetch_yahoo_data(ticker, period="2y")
-    benchmark_df = yahoo_data.benchmark_price.copy()
 
-    trade_returns, benchmark_returns = build_trade_and_benchmark_returns(
-        results_df,
-        benchmark_df,
+def build_metrics(
+    ticker: str,
+    results_df: pd.DataFrame,
+    ledger_df: pd.DataFrame,
+) -> dict[str, object]:
+    """Build transparent strategy and matched-benchmark performance metrics."""
+    strategy_returns = ledger_df["net_return_pct"].astype(float).tolist()
+    benchmark_returns = ledger_df["ihsg_return_pct"].astype(float).tolist()
+
+    strategy_equity = build_equity_curve(
+        ledger_df,
+        "strategy_equity",
+    )
+    benchmark_equity = build_equity_curve(
+        ledger_df,
+        "benchmark_equity",
     )
 
-    if not trade_returns:
-        print("No trades were generated (all signals were NEUTRAL).")
-        return
-
-    equity_curve_strategy = build_equity_curve(trade_returns)
-    equity_curve_benchmark = build_equity_curve(benchmark_returns)
     total_days = len(results_df)
 
-    metrics = {
+    return {
         "ticker": ticker,
-        "num_trades": len(trade_returns),
+        "test_observations": total_days,
+        "num_trades": len(ledger_df),
+        "holding_period_days": HOLDING_PERIOD_DAYS,
+        "cost_bps_per_side": COST_BPS_PER_SIDE,
+        "round_trip_cost_pct": round(
+            COST_BPS_PER_SIDE * 2 / 100,
+            2,
+        ),
         "strategy": {
             "cumulative_return_pct": round(
-                equity_curve_strategy[-1] - 100,
+                strategy_equity[-1] - INITIAL_EQUITY,
                 2,
             ),
             "cagr_pct": round(
                 cagr(
-                    equity_curve_strategy[-1] - 100,
+                    strategy_equity[-1] - INITIAL_EQUITY,
                     total_days,
                 ),
                 2,
             ),
             "annualized_volatility_pct": round(
-                annualized_volatility(trade_returns),
+                annualized_volatility(strategy_returns),
                 2,
             ),
             "sharpe_ratio": round(
-                sharpe_ratio(trade_returns),
+                sharpe_ratio(strategy_returns),
                 2,
             ),
             "max_drawdown_pct": round(
-                max_drawdown(equity_curve_strategy),
+                max_drawdown(strategy_equity),
                 2,
             ),
             "win_rate_pct": round(
-                win_rate(trade_returns),
+                win_rate(strategy_returns),
                 2,
             ),
         },
         "benchmark_IHSG": {
             "cumulative_return_pct": round(
-                equity_curve_benchmark[-1] - 100,
+                benchmark_equity[-1] - INITIAL_EQUITY,
                 2,
             ),
             "cagr_pct": round(
                 cagr(
-                    equity_curve_benchmark[-1] - 100,
+                    benchmark_equity[-1] - INITIAL_EQUITY,
                     total_days,
                 ),
                 2,
             ),
+            "annualized_volatility_pct": round(
+                annualized_volatility(benchmark_returns),
+                2,
+            ),
+            "sharpe_ratio": round(
+                sharpe_ratio(benchmark_returns),
+                2,
+            ),
             "max_drawdown_pct": round(
-                max_drawdown(equity_curve_benchmark),
+                max_drawdown(benchmark_equity),
                 2,
             ),
         },
     }
 
-    # Save equity curves as CSV.
+
+def save_backtest_artifacts(
+    ticker: str,
+    ledger_df: pd.DataFrame,
+    metrics: dict[str, object],
+) -> None:
+    """Save an auditable ledger, equity curves, metrics, and chart."""
+    strategy_equity = build_equity_curve(
+        ledger_df,
+        "strategy_equity",
+    )
+    benchmark_equity = build_equity_curve(
+        ledger_df,
+        "benchmark_equity",
+    )
+
+    ledger_df.to_csv(
+        OUTPUT_DIR / f"{ticker}_trade_ledger.csv",
+        index=False,
+    )
+
+    ledger_excel_path = OUTPUT_DIR / f"{ticker}_trade_ledger.xlsx"
+
+    with pd.ExcelWriter(
+        ledger_excel_path,
+        engine="openpyxl",
+    ) as writer:
+        ledger_df.to_excel(
+            writer,
+            sheet_name="Trade Ledger",
+            index=False,
+        )
+
+        worksheet = writer.sheets["Trade Ledger"]
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.dimensions
+
+        price_columns = {
+            "entry_price",
+            "exit_price",
+            "strategy_equity",
+            "benchmark_equity",
+        }
+        percent_columns = {
+            "gross_return_pct",
+            "round_trip_cost_pct",
+            "net_return_pct",
+            "ihsg_return_pct",
+        }
+
+        for column_cells in worksheet.columns:
+            column_letter = column_cells[0].column_letter
+            header = column_cells[0].value
+            maximum_length = max(
+                len(str(cell.value or ""))
+                for cell in column_cells
+            )
+
+            worksheet.column_dimensions[
+                column_letter
+            ].width = min(maximum_length + 2, 28)
+
+            if header in price_columns:
+                for cell in column_cells[1:]:
+                    cell.number_format = "#,##0.00"
+
+            if header in percent_columns:
+                for cell in column_cells[1:]:
+                    cell.number_format = '0.00"%"'
+
     pd.DataFrame(
         {
-            "strategy_equity": equity_curve_strategy,
-            "benchmark_equity": equity_curve_benchmark,
+            "trade_number": range(len(strategy_equity)),
+            "strategy_equity": strategy_equity,
+            "benchmark_equity": benchmark_equity,
         }
     ).to_csv(
         OUTPUT_DIR / f"{ticker}_equity_curve.csv",
         index=False,
     )
 
-    # Save metrics as JSON artifact.
-    with open(
-        OUTPUT_DIR / f"{ticker}_metrics.json",
+    with (OUTPUT_DIR / f"{ticker}_metrics.json").open(
         "w",
         encoding="utf-8",
-    ) as f:
-        json.dump(metrics, f, indent=2)
+    ) as file:
+        json.dump(metrics, file, indent=2)
 
-    # Plot and save the overlay equity curve PNG.
     plt.figure(figsize=(10, 5))
-    plt.plot(equity_curve_strategy, label=f"{ticker} strategy")
+    plt.plot(strategy_equity, label=f"{ticker} strategy")
     plt.plot(
-        equity_curve_benchmark,
-        label="IHSG benchmark (same windows)",
+        benchmark_equity,
+        label="IHSG benchmark (matched trade windows)",
     )
     plt.title(f"{ticker} Strategy vs IHSG Benchmark")
     plt.xlabel("Trade Number")
@@ -228,10 +360,58 @@ def main() -> None:
     plt.tight_layout()
     plt.savefig(
         OUTPUT_DIR / f"{ticker}_equity_curve.png",
+        dpi=150,
+    )
+    plt.close()
+
+
+def main() -> None:
+    ticker = input("Ticker to backtest (e.g. BBCA): ").strip().upper()
+    test_days = int(
+        input("Number of test days (e.g. 250): ").strip()
     )
 
-    # Also print metrics to the console.
+    results_df, _, _ = run_walk_forward_backtest(
+        ticker,
+        test_days,
+    )
+
+    fetcher = StockDataFetcher()
+    yahoo_data = fetcher.fetch_yahoo_data(
+        ticker,
+        period="2y",
+    )
+    benchmark_df = yahoo_data.benchmark_price.copy()
+
+    ledger_df = build_trade_ledger(
+        results_df,
+        benchmark_df,
+    )
+
+    if ledger_df.empty:
+        print("No qualifying long trades were generated.")
+        return
+
+    metrics = build_metrics(
+        ticker,
+        results_df,
+        ledger_df,
+    )
+
+    save_backtest_artifacts(
+        ticker,
+        ledger_df,
+        metrics,
+    )
+
     print(json.dumps(metrics, indent=2))
+    print()
+    print("Saved backtest artifacts:")
+    print(OUTPUT_DIR / f"{ticker}_trade_ledger.csv")
+    print(OUTPUT_DIR / f"{ticker}_trade_ledger.xlsx")
+    print(OUTPUT_DIR / f"{ticker}_equity_curve.csv")
+    print(OUTPUT_DIR / f"{ticker}_metrics.json")
+    print(OUTPUT_DIR / f"{ticker}_equity_curve.png")
 
 
 if __name__ == "__main__":
