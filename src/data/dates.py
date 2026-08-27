@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Union
 from zoneinfo import ZoneInfo
 
 JAKARTA_TZ = ZoneInfo("Asia/Jakarta")
 
-DateLike = Union[datetime, date]
+DateLike = datetime | date
 
 
 def to_jakarta_date(value: DateLike) -> date:

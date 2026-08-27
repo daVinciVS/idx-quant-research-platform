@@ -2,7 +2,6 @@ from datetime import date, datetime, timezone
 
 import pandas as pd
 import pytest
-
 from src.data.market_sessions import (
     exclude_incomplete_daily_bar,
     exclude_incomplete_daily_dataframe,
