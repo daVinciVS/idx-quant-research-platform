@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from openpyxl.styles import Font, PatternFill
+from src.analytics.decision import (
+    DecisionInputs,
+    RiskCategory,
+    evaluate_trade_decision,
+)
 
 # ------------------------------------------------------------
 # Reuse the already-loaded production classes when the
@@ -108,6 +114,81 @@ def numeric_value(
     except (TypeError, ValueError):
         return fallback
 
+def load_backtest_status(
+    ticker: str,
+) -> tuple[str, str]:
+    """Return cached backtest status without running a new backtest."""
+    ticker_code = ticker.replace(".JK", "").upper()
+    metrics_path = (
+        OUTPUT_DIR
+        / "backtests"
+        / f"{ticker_code}_metrics.json"
+    )
+
+    if not metrics_path.exists():
+        return (
+            "NOT AVAILABLE",
+            "Run the trade backtest before relying on historical validation.",
+        )
+
+    try:
+        with metrics_path.open(
+            "r",
+            encoding="utf-8",
+        ) as file:
+            backtest_metrics = json.load(file)
+
+    except (OSError, json.JSONDecodeError):
+        return (
+            "INVALID",
+            "Saved backtest metrics could not be read.",
+        )
+
+    strategy = backtest_metrics.get("strategy")
+    benchmark = backtest_metrics.get("benchmark_IHSG")
+    num_trades = backtest_metrics.get("num_trades")
+
+    if (
+        not isinstance(strategy, dict)
+        or not isinstance(benchmark, dict)
+        or not isinstance(num_trades, int)
+    ):
+        return (
+            "INVALID",
+            "Saved backtest metrics have an invalid structure.",
+        )
+
+    strategy_return = numeric_value(
+        strategy.get("cumulative_return_pct")
+    )
+    benchmark_return = numeric_value(
+        benchmark.get("cumulative_return_pct")
+    )
+
+    if pd.isna(strategy_return) or pd.isna(benchmark_return):
+        return (
+            "INVALID",
+            "Saved backtest returns are missing or invalid.",
+        )
+
+    status_parts: list[str] = []
+
+    if num_trades < 20:
+        status_parts.append("SMALL SAMPLE")
+
+    if strategy_return < benchmark_return:
+        status_parts.append("UNDERPERFORMED IHSG")
+    else:
+        status_parts.append("OUTPERFORMED IHSG")
+
+    return (
+        " | ".join(status_parts),
+        (
+            f"Strategy {strategy_return:.2f}% vs IHSG "
+            f"{benchmark_return:.2f}% across {num_trades} trades."
+        ),
+    )
+
 
 def read_watchlist(
     watchlist_path: Path,
@@ -180,19 +261,20 @@ def six_month_reporting_window(
 
 def build_screening_status(
     metrics: dict[str, Any],
+    decision: str,
 ) -> tuple[str, int]:
+    """Describe technical setup while enforcing the final decision gates."""
+    normalized_decision = safe_text(decision).upper()
+
     minervini_passed = bool(
         metrics.get("minervini_passed")
     )
-
     extension_status = safe_text(
         metrics.get("extension_risk_status")
     )
-
     pullback_rrr = numeric_value(
         metrics.get("pullback_rrr")
     )
-
     breakout_rrr = numeric_value(
         metrics.get("breakout_rrr")
     )
@@ -201,76 +283,119 @@ def build_screening_status(
         pd.notna(pullback_rrr)
         and pullback_rrr >= 2.0
     )
-
     valid_breakout = (
         pd.notna(breakout_rrr)
         and breakout_rrr >= 2.0
     )
 
-    if not minervini_passed:
+    if normalized_decision == "INSUFFICIENT DATA":
         return (
-            "REJECTED — TREND TEMPLATE FAILED",
+            "INSUFFICIENT DATA - DO NOT RANK",
             1,
         )
 
-    if "BUYING CLIMAX" in extension_status.upper():
+    if normalized_decision == "AVOID":
         return (
-            "REJECTED — BUYING CLIMAX RISK",
+            "AVOID - FINAL DECISION GATE",
             1,
         )
 
-    if valid_pullback:
-        return (
-            "QUALIFIED — PULLBACK SETUP",
-            4,
-        )
+    if normalized_decision == "WAIT / NEUTRAL":
+        if not minervini_passed:
+            return (
+                "WAIT - TREND TEMPLATE FAILED",
+                2,
+            )
 
-    if valid_breakout:
         return (
-            "WATCH — BREAKOUT SETUP",
-            3,
-        )
-
-    if "EXTENDED" in extension_status.upper():
-        return (
-            "WATCH — EXTENDED; WAIT FOR RESET",
+            "WAIT - CONFIRMATION INCOMPLETE",
             2,
         )
 
+    if normalized_decision == "WATCHLIST":
+        if "BUYING CLIMAX" in extension_status.upper():
+            return (
+                "WATCHLIST - BUYING CLIMAX RISK",
+                3,
+            )
+
+        if "EXTENDED" in extension_status.upper():
+            return (
+                "WATCHLIST - EXTENDED; WAIT FOR RESET",
+                3,
+            )
+
+        if valid_pullback:
+            return (
+                "WATCHLIST - PULLBACK SETUP",
+                3,
+            )
+
+        if valid_breakout:
+            return (
+                "WATCHLIST - BREAKOUT SETUP",
+                3,
+            )
+
+        return (
+            "WATCHLIST - WAIT FOR BETTER RISK/REWARD",
+            3,
+        )
+
+    if normalized_decision == "CONSIDER ENTRY":
+        if valid_pullback:
+            return (
+                "CONSIDER ENTRY - PULLBACK SETUP",
+                5,
+            )
+
+        if valid_breakout:
+            return (
+                "CONSIDER ENTRY - BREAKOUT SETUP",
+                5,
+            )
+
+        return (
+            "CONSIDER ENTRY - REVIEW EXECUTION PLAN",
+            5,
+        )
+
     return (
-        "WATCH — RRR BELOW MINIMUM",
-        2,
+        "WAIT - UNRECOGNIZED DECISION",
+        1,
     )
 
 
 def classify_finalist_queue(
+    decision: str,
     screening_status: str,
 ) -> str:
-    status = safe_text(
-        screening_status
-    ).upper()
+    """Assign a watchlist queue using the final decision as the first gate."""
+    normalized_decision = safe_text(decision).upper()
+    normalized_status = safe_text(screening_status).upper()
 
-    if status.startswith(
-        "QUALIFIED — PULLBACK"
-    ):
-        return "01. Qualified Pullback"
+    if normalized_decision == "CONSIDER ENTRY":
+        if "PULLBACK" in normalized_status:
+            return "01. Consider Entry - Pullback"
 
-    if status.startswith(
-        "WATCH — BREAKOUT"
-    ):
-        return "02. Breakout Watchlist"
+        if "BREAKOUT" in normalized_status:
+            return "02. Consider Entry - Breakout"
 
-    if status.startswith(
-        "WATCH — EXTENDED"
-    ):
-        return "03. Extended Valid Trends"
+        return "03. Consider Entry - Review"
 
-    if status.startswith(
-        "REJECTED"
-    ):
-        return "05. Rejected Trend Template"
+    if normalized_decision == "WATCHLIST":
+        return "04. Watchlist"
 
-    return "04. Monitor / Low Quality"
+    if normalized_decision == "WAIT / NEUTRAL":
+        return "05. Wait for Confirmation"
+
+    if normalized_decision == "AVOID":
+        return "06. Avoid"
+
+    if normalized_decision == "INSUFFICIENT DATA":
+        return "07. Insufficient Data"
+
+    return "08. Unclassified"
 
 def analyze_ticker(
     ticker: str,
@@ -307,12 +432,94 @@ def analyze_ticker(
         report_df,
     )
 
+    relative_strength_signal = safe_text(
+        metrics.get("relative_strength_signal")
+    )
+
+    decision_inputs = DecisionInputs(
+        has_sufficient_data=(
+            numeric_value(
+                metrics.get("data_coverage_percent")
+            )
+            >= 60
+        ),
+        trend_template_passed=bool(
+            metrics.get("minervini_passed")
+        ),
+        relative_strength_positive=(
+            "OUTPERFORMING" in relative_strength_signal.upper()
+            or "BULLISH" in relative_strength_signal.upper()
+            or "POSITIVE" in relative_strength_signal.upper()
+        ),
+        wyckoff_phase=safe_text(
+            metrics.get("wyckoff_phase")
+        ),
+        extension_risk=(
+            safe_text(
+                metrics.get("extension_risk_status")
+            )
+            != "NORMAL"
+        ),
+        risk_reward_ratio=numeric_value(
+            metrics.get("pullback_rrr")
+        ),
+        risk_category=(
+            RiskCategory.SAFE
+            if safe_text(metrics.get("risk_label"))
+            == "SAFE (Bluechip / Liquid)"
+            else (
+                RiskCategory.MODERATE
+                if safe_text(metrics.get("risk_label"))
+                == "MODERATE RISK (Second Liner)"
+                else (
+                    RiskCategory.EXTREME
+                    if safe_text(metrics.get("risk_label"))
+                    == "EXTREME RISK (Saham Gorengan)"
+                    else RiskCategory.UNKNOWN
+                )
+            )
+        ),
+    )
+
+    trade_decision = evaluate_trade_decision(
+        decision_inputs
+    )
+
+    risk_label = safe_text(metrics.get("risk_label"))
+
+    if (
+        risk_label == "MODERATE RISK (Second Liner)"
+        and trade_decision.label.value == "CONSIDER ENTRY"
+    ):
+        trade_decision = trade_decision.__class__(
+            label=trade_decision.label.WATCHLIST,
+            confidence="Medium",
+            reasons=(
+                *trade_decision.reasons,
+                "Moderate-risk second-liner: require extra liquidity review.",
+            ),
+            next_action=(
+                "Keep on the watchlist. Review liquidity, spread, "
+                "and position size before considering entry."
+            ),
+        )
+
+    metrics["decision"] = trade_decision.label.value
+    metrics["decision_confidence"] = trade_decision.confidence
+    metrics["decision_next_action"] = trade_decision.next_action
+
     screening_status, priority = build_screening_status(
-        metrics
+        metrics,
+        trade_decision.label.value,
+    )
+
+    backtest_status, backtest_summary = load_backtest_status(
+        yahoo_data.ticker
     )
 
     finalist_queue = classify_finalist_queue(
-        screening_status
+        trade_decision.label.value,
+        screening_status,
     )
 
     minervini_checks = (
@@ -331,6 +538,9 @@ def analyze_ticker(
         "Latest Close": numeric_value(
             metrics.get("latest_close")
         ),
+        "Decision": trade_decision.label.value,
+        "Decision Confidence": trade_decision.confidence,
+        "Suggested Next Action": trade_decision.next_action,
         "Model Decision (Yahoo-only)": safe_text(
             metrics.get("decision")
         ),
@@ -341,8 +551,9 @@ def analyze_ticker(
             metrics.get("raw_score")
         ),
         "Data Coverage (%)": numeric_value(
-            metrics.get("data_coverage")
+            metrics.get("data_coverage_percent")
         ),
+        "Relative Strength vs IHSG": relative_strength_signal,
         "Wyckoff Phase": safe_text(
             metrics.get("wyckoff_phase")
         ),
@@ -373,6 +584,8 @@ def analyze_ticker(
         "Breakout Trigger": numeric_value(
             metrics.get("breakout_entry")
         ),
+        "Backtest Validation": backtest_status,
+        "Backtest Summary": backtest_summary,
         "Finalist Queue": finalist_queue,
         "Screening Status": screening_status,
         "Screening Priority": priority,
@@ -421,11 +634,22 @@ def create_excel_output(
         )
 
         queue_sheet_mapping = {
-            "01. Qualified Pullback": "01 Pullback Setups",
-            "02. Breakout Watchlist": "02 Breakout Watchlist",
-            "03. Extended Valid Trends": "03 Extended Trends",
-            "04. Monitor / Low Quality": "04 Monitor",
-            "05. Rejected Trend Template": "05 Rejected",
+            "01. Consider Entry - Pullback": (
+                "01 Entry Pullback"
+            ),
+            "02. Consider Entry - Breakout": (
+                "02 Entry Breakout"
+            ),
+            "03. Consider Entry - Review": (
+                "03 Entry Review"
+            ),
+            "04. Watchlist": "04 Watchlist",
+            "05. Wait for Confirmation": (
+                "05 Wait Confirmation"
+            ),
+            "06. Avoid": "06 Avoid",
+            "07. Insufficient Data": "07 Insufficient Data",
+            "08. Unclassified": "08 Unclassified",
         }
 
         for queue_name, sheet_name in (
@@ -558,42 +782,53 @@ def print_finalist_queue(
     if ranked_df.empty:
         return
 
-    queue_order = [
-        "01. Qualified Pullback",
-        "02. Breakout Watchlist",
-        "03. Extended Valid Trends",
-        "04. Monitor / Low Quality",
-        "05. Rejected Trend Template",
-    ]
-
     display_columns = [
         "Rank",
         "Ticker",
+        "Decision",
+        "Decision Confidence",
         "Normalized Score",
+        "Relative Strength vs IHSG",
         "Wyckoff Phase",
         "Minervini Status",
         "Extension Risk",
         "Pullback RRR",
         "Breakout RRR",
+        "Risk Classification",
+        "Backtest Validation",
         "Screening Status",
     ]
 
+    queue_order = [
+        "01. Consider Entry - Pullback",
+        "02. Consider Entry - Breakout",
+        "03. Consider Entry - Review",
+        "04. Watchlist",
+        "05. Wait for Confirmation",
+        "06. Avoid",
+        "07. Insufficient Data",
+        "08. Unclassified",
+    ]
+
     queue_titles = {
-        "01. Qualified Pullback": (
-            "QUALIFIED PULLBACK SETUPS"
+        "01. Consider Entry - Pullback": (
+            "CONSIDER ENTRY - PULLBACK SETUPS"
         ),
-        "02. Breakout Watchlist": (
-            "BREAKOUT WATCHLIST"
+        "02. Consider Entry - Breakout": (
+            "CONSIDER ENTRY - BREAKOUT SETUPS"
         ),
-        "03. Extended Valid Trends": (
-            "EXTENDED BUT STRUCTURALLY VALID"
+        "03. Consider Entry - Review": (
+            "CONSIDER ENTRY - REVIEW EXECUTION"
         ),
-        "04. Monitor / Low Quality": (
-            "MONITOR / LOW-QUALITY SETUPS"
+        "04. Watchlist": "WATCHLIST - WAIT FOR CONFIRMATION",
+        "05. Wait for Confirmation": (
+            "WAIT / NEUTRAL - CONFIRMATION INCOMPLETE"
         ),
-        "05. Rejected Trend Template": (
-            "REJECTED — TREND TEMPLATE FAILED"
+        "06. Avoid": "AVOID - FINAL DECISION GATE",
+        "07. Insufficient Data": (
+            "INSUFFICIENT DATA - DO NOT ACT"
         ),
+        "08. Unclassified": "UNCLASSIFIED RESULTS",
     }
 
     print()
@@ -649,9 +884,10 @@ def offer_deep_dive_handoff(
         return
 
     eligible_queues = [
-        "01. Qualified Pullback",
-        "02. Breakout Watchlist",
-        "03. Extended Valid Trends",
+        "01. Consider Entry - Pullback",
+        "02. Consider Entry - Breakout",
+        "03. Consider Entry - Review",
+        "04. Watchlist",
     ]
 
     finalists_df = ranked_df[

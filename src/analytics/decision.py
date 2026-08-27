@@ -12,6 +12,13 @@ class DecisionLabel(str, Enum):
     INSUFFICIENT_DATA = "INSUFFICIENT DATA"
 
 
+class RiskCategory(str, Enum):
+    SAFE = "SAFE"
+    MODERATE = "MODERATE"
+    EXTREME = "EXTREME"
+    UNKNOWN = "UNKNOWN"
+
+
 @dataclass(frozen=True)
 class DecisionInputs:
     has_sufficient_data: bool
@@ -20,7 +27,7 @@ class DecisionInputs:
     wyckoff_phase: str
     extension_risk: bool
     risk_reward_ratio: float | None
-    abnormal_volatility_risk: bool = False
+    risk_category: RiskCategory = RiskCategory.UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -41,14 +48,16 @@ def evaluate_trade_decision(inputs: DecisionInputs) -> TradeDecision:
             next_action="Wait for complete, validated daily OHLCV data.",
         )
 
-    if inputs.abnormal_volatility_risk:
+    if inputs.risk_category == RiskCategory.EXTREME:
         return TradeDecision(
             label=DecisionLabel.AVOID,
             confidence="Medium",
             reasons=(
-                "Abnormal price volatility makes execution and risk estimates unreliable.",
+                "Extreme risk classification makes execution and risk estimates unreliable.",
             ),
-            next_action="Exclude the ticker until liquidity and volatility are acceptable.",
+            next_action=(
+                "Exclude the ticker until liquidity and volatility are acceptable."
+            ),
         )
 
     reasons: list[str] = []
@@ -79,19 +88,56 @@ def evaluate_trade_decision(inputs: DecisionInputs) -> TradeDecision:
             f"Estimated risk/reward ratio: {inputs.risk_reward_ratio:.2f}."
         )
 
-    if (
+    if inputs.risk_category == RiskCategory.MODERATE:
+        reasons.append(
+            "Moderate-risk second-liner: require extra liquidity review."
+        )
+
+    if inputs.risk_category == RiskCategory.UNKNOWN:
+        reasons.append(
+            "Risk classification is unavailable; do not promote to entry."
+        )
+
+    if inputs.risk_category == RiskCategory.UNKNOWN:
+        return TradeDecision(
+            label=DecisionLabel.WAIT,
+            confidence="Low",
+            reasons=tuple(reasons),
+            next_action=(
+                "Wait until risk classification is available before "
+                "considering entry."
+            ),
+        )
+
+    setup_is_strong = (
         inputs.trend_template_passed
         and inputs.relative_strength_positive
         and not inputs.extension_risk
         and has_acceptable_risk_reward
-    ):
+    )
+
+    if setup_is_strong and inputs.risk_category == RiskCategory.SAFE:
         return TradeDecision(
             label=DecisionLabel.CONSIDER_ENTRY,
             confidence="Medium",
             reasons=tuple(reasons),
             next_action=(
-                "Review the planned entry, stop loss, liquidity, and portfolio risk "
-                "before placing any order."
+                "Review the planned entry, stop loss, liquidity, and portfolio "
+                "risk before placing any order."
+            ),
+        )
+
+    if (
+        setup_is_strong
+        and inputs.risk_category == RiskCategory.MODERATE
+    ):
+        return TradeDecision(
+            label=DecisionLabel.WATCHLIST,
+            confidence="Medium",
+            reasons=tuple(reasons),
+            next_action=(
+                "Keep on the watchlist. Review liquidity, spread, and position "
+                "size before considering entry."
             ),
         )
 
@@ -119,5 +165,7 @@ def evaluate_trade_decision(inputs: DecisionInputs) -> TradeDecision:
         label=DecisionLabel.WAIT,
         confidence="Low",
         reasons=tuple(reasons),
-        next_action="Monitor for clearer alignment between trend and relative strength.",
+        next_action=(
+            "Monitor for clearer alignment between trend and relative strength."
+        ),
     )

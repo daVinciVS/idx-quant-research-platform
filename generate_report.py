@@ -22,7 +22,11 @@ from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from pdf_reporter import generate_pdf_report
-from src.analytics.decision import DecisionInputs, evaluate_trade_decision
+from src.analytics.decision import (
+    DecisionInputs,
+    RiskCategory,
+    evaluate_trade_decision,
+)
 from src.analytics.trade_plan import calculate_trade_plan
 from src.data.contracts import DataContractError, validate_ohlcv
 from src.data.market_sessions import exclude_incomplete_daily_dataframe
@@ -6759,8 +6763,20 @@ def main(
             wyckoff_phase=str(metrics["wyckoff_phase"]),
             extension_risk=metrics["extension_risk_status"] != "NORMAL",
             risk_reward_ratio=metrics["pullback_rrr"],
-            abnormal_volatility_risk=(
-                metrics["risk_label"] != "SAFE (Bluechip / Liquid)"
+            risk_category=(
+                RiskCategory.SAFE
+                if metrics["risk_label"] == "SAFE (Bluechip / Liquid)"
+                else (
+                    RiskCategory.MODERATE
+                    if metrics["risk_label"]
+                    == "MODERATE RISK (Second Liner)"
+                    else (
+                        RiskCategory.EXTREME
+                        if metrics["risk_label"]
+                        == "EXTREME RISK (Saham Gorengan)"
+                        else RiskCategory.UNKNOWN
+                    )
+                )
             ),
         )
 
