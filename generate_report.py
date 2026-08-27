@@ -4592,7 +4592,7 @@ class ExcelReportBuilder:
 
         self.set_header(
             ws,
-            18,
+            evidence_start,
             [
                 "Pillar",
                 "Result",
@@ -4603,7 +4603,7 @@ class ExcelReportBuilder:
 
         for row, evidence in enumerate(
             metrics["evidence"],
-            start=evidence_start,
+            start=evidence_start + 1,
         ):
             ws.cell(row, 1, evidence[0])
             ws.cell(row, 2, evidence[1])
@@ -4635,7 +4635,7 @@ class ExcelReportBuilder:
 
         risk_start = evidence_start + len(
             metrics["evidence"]
-        ) + 2
+        ) + 3
 
         self.set_section_title(
             ws,
