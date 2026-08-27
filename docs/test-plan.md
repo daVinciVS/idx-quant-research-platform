@@ -117,3 +117,26 @@ Automated validation:
 
 - `python -m pytest -v` → 29 passed
 - `python -m py_compile .\generate_report.py` → passed
+
+
+### 2026-08-27 — OHLCV contract integration
+
+- Command: `python .\generate_report.py`
+- Workflow: `1` — Single Stock Deep-Dive Report
+- Ticker: `BBCA`
+- Data source: Yahoo-only analysis
+- Result: Passed
+
+Validation observed:
+
+- Yahoo price data was normalized and validated before analysis.
+- IHSG benchmark data was normalized and validated before merging.
+- The workflow completed without missing-column, invalid-date, invalid-numeric,
+  duplicate-date, or invalid OHLC relationship errors.
+- The completed-candle guard ran after data validation.
+- Indicators, scoring, Excel reporting, and PDF generation completed successfully.
+
+Automated validation:
+
+- `python -m pytest -v` → 41 passed
+- `python -m py_compile .\generate_report.py` → passed

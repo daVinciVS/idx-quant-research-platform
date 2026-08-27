@@ -24,6 +24,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from src.analytics.trade_plan import calculate_trade_plan
+from src.data.contracts import DataContractError, validate_ohlcv
 from src.data.market_sessions import exclude_incomplete_daily_dataframe
 
 # ============================================================
@@ -178,6 +179,69 @@ class StockDataFetcher:
 
         return completed_history
 
+    @staticmethod
+    def validate_daily_ohlcv(
+        history: pd.DataFrame,
+        *,
+        source_name: str,
+    ) -> pd.DataFrame:
+        """Remove incomplete OHLCV rows, then enforce the data contract."""
+        required_columns = [
+            "Date",
+            "Open",
+            "High",
+            "Low",
+            "Close",
+            "Volume",
+        ]
+
+        missing_columns = [
+            column
+            for column in required_columns
+            if column not in history.columns
+        ]
+
+        if missing_columns:
+            raise RuntimeError(
+                f"{source_name} response missing columns: "
+                f"{missing_columns}"
+            )
+
+        cleaned = history.copy()
+
+        for column in required_columns[1:]:
+            cleaned[column] = pd.to_numeric(
+                cleaned[column],
+                errors="coerce",
+            )
+
+        before_count = len(cleaned)
+
+        cleaned = cleaned.dropna(subset=required_columns).copy()
+
+        dropped_rows = before_count - len(cleaned)
+
+        if dropped_rows:
+            logger.warning(
+                "%s: removed %s incomplete OHLCV row(s) "
+                "before contract validation.",
+                source_name,
+                dropped_rows,
+            )
+
+        if cleaned.empty:
+            raise RuntimeError(
+                f"{source_name} has no valid OHLCV rows "
+                "after cleaning."
+            )
+
+        try:
+            return validate_ohlcv(cleaned)
+        except DataContractError as error:
+            raise RuntimeError(
+                f"{source_name} failed OHLCV data validation: {error}"
+            ) from error
+
     def fetch_yahoo_data(
         self,
         ticker: str,
@@ -239,34 +303,19 @@ class StockDataFetcher:
             ]
         ].copy()
 
-        for column in [
-            "Open",
-            "High",
-            "Low",
-            "Close",
-            "Adj Close",
-            "Volume",
-        ]:
-            daily_price[column] = pd.to_numeric(
-                daily_price[column],
-                errors="coerce",
-            )
+        daily_price = self.validate_daily_ohlcv(
+            daily_price,
+            source_name=symbol,
+        )
+
+        daily_price["Adj Close"] = pd.to_numeric(
+            daily_price["Adj Close"],
+            errors="coerce",
+        )
 
         daily_price = daily_price.dropna(
-            subset=[
-                "Open",
-                "High",
-                "Low",
-                "Close",
-                "Volume",
-            ]
-        )
-
-        daily_price = (
-            daily_price
-            .sort_values("Date")
-            .reset_index(drop=True)
-        )
+            subset=["Adj Close"]
+        ).copy()
 
         daily_price = self.keep_completed_daily_bars(
             daily_price
@@ -334,7 +383,11 @@ class StockDataFetcher:
             )
 
             benchmark = self.clean_history(benchmark)
-            
+            benchmark = self.validate_daily_ohlcv(
+                benchmark,
+                source_name="IHSG benchmark",
+            )
+
             if benchmark.empty:
                 return pd.DataFrame(
                     columns=["Date", "IHSG Close"]
