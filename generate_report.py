@@ -22,6 +22,7 @@ from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from pdf_reporter import generate_pdf_report
+from src.analytics.decision import DecisionInputs, evaluate_trade_decision
 from src.analytics.trade_plan import calculate_trade_plan
 from src.data.contracts import DataContractError, validate_ohlcv
 from src.data.market_sessions import exclude_incomplete_daily_dataframe
@@ -6605,6 +6606,35 @@ def main(
             report_df,
         )
 
+        decision_inputs = DecisionInputs(
+            has_sufficient_data=metrics["data_coverage_percent"] >= 60,
+            trend_template_passed=bool(metrics["minervini_passed"]),
+            relative_strength_positive=(
+                "OUTPERFORMING" in str(
+                    metrics["relative_strength_signal"]
+                ).upper()
+                or "BULLISH" in str(
+                    metrics["relative_strength_signal"]
+                ).upper()
+                or "POSITIVE" in str(
+                    metrics["relative_strength_signal"]
+                ).upper()
+            ),
+            wyckoff_phase=str(metrics["wyckoff_phase"]),
+            extension_risk=metrics["extension_risk_status"] != "NORMAL",
+            risk_reward_ratio=metrics["pullback_rrr"],
+            abnormal_volatility_risk=(
+                metrics["risk_label"] != "SAFE (Bluechip / Liquid)"
+            ),
+        )
+
+        trade_decision = evaluate_trade_decision(decision_inputs)
+
+        metrics["decision"] = trade_decision.label.value
+        metrics["decision_confidence"] = trade_decision.confidence
+        metrics["decision_reasons"] = list(trade_decision.reasons)
+        metrics["decision_next_action"] = trade_decision.next_action
+
         generated_datetime = datetime.now()
 
         generated_at_display = generated_datetime.strftime(
@@ -6704,6 +6734,14 @@ def main(
         print(f"Company: {fundamentals['name']}")
         print(f"Latest Close: {metrics['latest_close']:,.2f}")
         print(f"Decision: {metrics['decision']}")
+        print(f"Decision confidence: {metrics['decision_confidence']}")
+        print("Why this decision:")
+
+        for reason in metrics["decision_reasons"]:
+            print(f"  - {reason}")
+
+        print("Suggested next action:")
+        print(f"  {metrics['decision_next_action']}")
         print(
             "Raw Score: "
             f"{metrics['raw_score']} / "
