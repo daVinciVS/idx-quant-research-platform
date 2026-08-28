@@ -1,0 +1,3 @@
+﻿ticker,sector,entry_price,stop_price,quantity,current_price,status
+BBCA.JK,Financials,9500,9100,500,9600,OPEN
+ANTM.JK,Materials,3100,2920,1000,3150,OPEN
