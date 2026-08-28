@@ -13,6 +13,11 @@ from src.analytics.decision import (
     RiskCategory,
     evaluate_trade_decision,
 )
+from src.portfolio.screener_gate import (
+    PortfolioContext,
+    evaluate_portfolio_gate,
+    load_portfolio_context,
+)
 
 # ------------------------------------------------------------
 # Reuse the already-loaded production classes when the
@@ -397,10 +402,32 @@ def classify_finalist_queue(
 
     return "08. Unclassified"
 
+def try_load_portfolio_context() -> PortfolioContext | None:
+    """Load local portfolio data once without blocking the batch screener."""
+    config_path = Path("data/portfolio/portfolio_config.json")
+    positions_path = Path("data/portfolio/positions.csv")
+
+    try:
+        context = load_portfolio_context(
+            config_path,
+            positions_path,
+        )
+    except (FileNotFoundError, ValueError) as error:
+        print(f"Portfolio gate unavailable: {error}")
+        return None
+
+    print(
+        "Portfolio gate loaded: "
+        f"{len(context.positions)} position(s), "
+        f"equity {context.config.equity:,.0f}."
+    )
+    return context
+
 def analyze_ticker(
     ticker: str,
     fetcher: StockDataFetcher,
     analytics: AnalyticsEngine,
+    portfolio_context: PortfolioContext | None,
 ) -> dict[str, Any]:
     yahoo_data = fetcher.fetch_yahoo_data(
         ticker,
@@ -485,25 +512,6 @@ def analyze_ticker(
         decision_inputs
     )
 
-    risk_label = safe_text(metrics.get("risk_label"))
-
-    if (
-        risk_label == "MODERATE RISK (Second Liner)"
-        and trade_decision.label.value == "CONSIDER ENTRY"
-    ):
-        trade_decision = trade_decision.__class__(
-            label=trade_decision.label.WATCHLIST,
-            confidence="Medium",
-            reasons=(
-                *trade_decision.reasons,
-                "Moderate-risk second-liner: require extra liquidity review.",
-            ),
-            next_action=(
-                "Keep on the watchlist. Review liquidity, spread, "
-                "and position size before considering entry."
-            ),
-        )
-
     metrics["decision"] = trade_decision.label.value
     metrics["decision_confidence"] = trade_decision.confidence
     metrics["decision_next_action"] = trade_decision.next_action
@@ -527,7 +535,7 @@ def analyze_ticker(
         f"/{safe_text(metrics.get('minervini_total_checks'))}"
     )
 
-    return {
+    result = {
         "Ticker": yahoo_data.ticker,
         "Company": safe_text(
             fundamentals.get("name")
@@ -584,6 +592,18 @@ def analyze_ticker(
         "Breakout Trigger": numeric_value(
             metrics.get("breakout_entry")
         ),
+        "Pullback Stop Loss": numeric_value(
+            metrics.get("pullback_stop_loss")
+        ),
+        "Pullback Target 1": numeric_value(
+            metrics.get("pullback_target_1")
+        ),
+        "Breakout Stop Loss": numeric_value(
+            metrics.get("breakout_stop_loss")
+        ),
+        "Breakout Target 1": numeric_value(
+            metrics.get("breakout_target_1")
+        ),
         "Backtest Validation": backtest_status,
         "Backtest Summary": backtest_summary,
         "Finalist Queue": finalist_queue,
@@ -592,6 +612,29 @@ def analyze_ticker(
         "Broker Data": "Not requested in screener",
         "Foreign Flow Data": "Not requested in screener",
     }
+
+    portfolio_result = evaluate_portfolio_gate(
+        result,
+        portfolio_context,
+    )
+    result.update(
+        {
+            "Portfolio Action": portfolio_result.action,
+            "Portfolio Plan": portfolio_result.plan_type,
+            "Recommended Quantity": portfolio_result.recommended_quantity,
+            "Position Value": portfolio_result.position_value,
+            "Initial Risk (Rp)": portfolio_result.initial_risk_amount,
+            "Initial Risk (%)": portfolio_result.initial_risk_pct,
+            "Projected Portfolio Heat (%)": (
+                portfolio_result.projected_portfolio_heat_pct
+            ),
+            "Portfolio Gate Reasons": " | ".join(
+                portfolio_result.reasons
+            ),
+        }
+    )
+
+    return result
 
 
 def create_excel_output(
@@ -782,7 +825,7 @@ def print_finalist_queue(
     if ranked_df.empty:
         return
 
-    display_columns = [
+    base_display_columns = [
         "Rank",
         "Ticker",
         "Decision",
@@ -797,6 +840,14 @@ def print_finalist_queue(
         "Risk Classification",
         "Backtest Validation",
         "Screening Status",
+    ]
+
+    portfolio_display_columns = [
+        "Portfolio Action",
+        "Portfolio Plan",
+        "Recommended Quantity",
+        "Initial Risk (%)",
+        "Projected Portfolio Heat (%)",
     ]
 
     queue_order = [
@@ -849,9 +900,16 @@ def print_finalist_queue(
             print("None")
             continue
 
-        display_df = queue_df[
-            display_columns
-        ].copy()
+        display_columns = list(base_display_columns)
+
+        if queue_name in {
+            "01. Consider Entry - Pullback",
+            "02. Consider Entry - Breakout",
+            "03. Consider Entry - Review",
+        }:
+            display_columns.extend(portfolio_display_columns)
+
+        display_df = queue_df[display_columns].copy()
 
         display_df["Normalized Score"] = (
             display_df["Normalized Score"].map(
@@ -870,6 +928,27 @@ def print_finalist_queue(
                 lambda value: safe_number(value, 2)
             )
         )
+
+        if "Initial Risk (%)" in display_df.columns:
+            display_df["Initial Risk (%)"] = display_df[
+                "Initial Risk (%)"
+            ].map(
+                lambda value: (
+                    f"{value:.2%}"
+                    if pd.notna(value)
+                    else "N/A"
+                )
+            )
+
+            display_df["Projected Portfolio Heat (%)"] = display_df[
+                "Projected Portfolio Heat (%)"
+            ].map(
+                lambda value: (
+                    f"{value:.2%}"
+                    if pd.notna(value)
+                    else "N/A"
+                )
+            )
 
         print(
             display_df.to_string(
@@ -1021,6 +1100,8 @@ def main() -> None:
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
 
+    portfolio_context = try_load_portfolio_context()
+
     for index, ticker in enumerate(
         tickers,
         start=1,
@@ -1035,6 +1116,7 @@ def main() -> None:
                 ticker,
                 fetcher,
                 analytics,
+                portfolio_context,
             )
 
             results.append(result)
