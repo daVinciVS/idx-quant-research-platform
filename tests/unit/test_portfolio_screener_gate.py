@@ -73,7 +73,7 @@ def test_breakout_entry_uses_breakout_plan(context, pullback_row):
 
     result = evaluate_portfolio_gate(pullback_row, context)
 
-    assert result.action == "ALLOWED — REDUCED SIZE"
+    assert result.action == "ALLOWED - REDUCED SIZE"
     assert result.plan_type == "BREAKOUT"
     assert result.recommended_quantity == 9_500
     assert result.position_value == 9_975_000
@@ -96,7 +96,7 @@ def test_missing_trade_plan_value_blocks_entry(context, pullback_row):
 
     result = evaluate_portfolio_gate(pullback_row, context)
 
-    assert result.action == "BLOCKED — INVALID TRADE PLAN"
+    assert result.action == "BLOCKED - INVALID TRADE PLAN"
     assert result.recommended_quantity == 0
 
 
@@ -107,7 +107,7 @@ def test_non_safe_candidate_is_blocked_by_risk_engine(context, pullback_row):
 
     result = evaluate_portfolio_gate(pullback_row, context)
 
-    assert result.action == "BLOCKED — RISK CATEGORY"
+    assert result.action == "BLOCKED - RISK CATEGORY"
     assert result.recommended_quantity == 0
 
 
@@ -138,5 +138,5 @@ def test_portfolio_heat_limit_blocks_candidate(pullback_row):
 
     result = evaluate_portfolio_gate(pullback_row, context)
 
-    assert result.action == "BLOCKED — PORTFOLIO HEAT LIMIT"
+    assert result.action == "BLOCKED - PORTFOLIO HEAT LIMIT"
     assert result.recommended_quantity == 0

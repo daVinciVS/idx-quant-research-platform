@@ -57,7 +57,7 @@ def size_proposed_trade(
 
     if proposed.risk_category != RiskCategory.SAFE:
         return PositionSizeResult(
-            action="BLOCKED — RISK CATEGORY",
+            action="BLOCKED - RISK CATEGORY",
             quantity=0,
             position_value=0.0,
             initial_risk_amount=0.0,
@@ -84,7 +84,7 @@ def size_proposed_trade(
 
     if proposed.entry_price <= 0 or proposed.stop_price <= 0:
         return PositionSizeResult(
-            action="BLOCKED — INVALID TRADE",
+            action="BLOCKED - INVALID TRADE",
             quantity=0,
             position_value=0.0,
             initial_risk_amount=0.0,
@@ -98,7 +98,7 @@ def size_proposed_trade(
 
     if proposed.stop_price >= proposed.entry_price:
         return PositionSizeResult(
-            action="BLOCKED — INVALID TRADE",
+            action="BLOCKED - INVALID TRADE",
             quantity=0,
             position_value=0.0,
             initial_risk_amount=0.0,
@@ -140,17 +140,21 @@ def size_proposed_trade(
 
     if quantity < config.lot_size:
         if remaining_heat_amount <= 0:
-            action = "BLOCKED — PORTFOLIO HEAT LIMIT"
+            action = "BLOCKED - PORTFOLIO HEAT LIMIT"
             reason = "Existing open-position risk already reaches the heat limit."
         elif spendable_cash < proposed.entry_price * config.lot_size:
-            action = "BLOCKED — INSUFFICIENT CASH"
-            reason = "Available cash after the required reserve cannot fund one board lot."
+            action = "BLOCKED - INSUFFICIENT CASH"
+            reason = (
+                "Available cash after the required reserve cannot fund one board lot."
+            )
         elif max_notional < proposed.entry_price * config.lot_size:
-            action = "BLOCKED — MAX POSITION SIZE"
+            action = "BLOCKED - MAX POSITION SIZE"
             reason = "Maximum position-notional limit cannot fund one board lot."
         else:
-            action = "BLOCKED — INVALID TRADE"
-            reason = "Risk budget cannot fund one board lot at the proposed stop distance."
+            action = "BLOCKED - INVALID TRADE"
+            reason = (
+                "Risk budget cannot fund one board lot at the proposed stop distance."
+            )
 
         return PositionSizeResult(
             action=action,
@@ -179,19 +183,16 @@ def size_proposed_trade(
     )
 
     if quantity < _round_down_to_lot(quantity_by_risk, config.lot_size):
-        action = "ALLOWED — REDUCED SIZE"
+        action = "ALLOWED - REDUCED SIZE"
         reasons.append(f"Position size reduced by {binding_constraint} constraint.")
     else:
         action = "ALLOWED"
         reasons.append("Position fits risk, cash, notional, and heat limits.")
 
     reasons.append(
-        f"Initial risk: {initial_risk_amount:,.0f} "
-        f"({initial_risk_pct:.2%} of equity)."
+        f"Initial risk: {initial_risk_amount:,.0f} ({initial_risk_pct:.2%} of equity)."
     )
-    reasons.append(
-        f"Projected portfolio heat: {projected_heat:.2%}."
-    )
+    reasons.append(f"Projected portfolio heat: {projected_heat:.2%}.")
 
     return PositionSizeResult(
         action=action,
