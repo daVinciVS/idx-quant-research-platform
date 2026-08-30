@@ -98,7 +98,7 @@ def test_trade_is_reduced_when_cash_reserve_limits_size(config, safe_trade):
 
     result = size_proposed_trade(constrained_config, [], safe_trade)
 
-    assert result.action == "ALLOWED — REDUCED SIZE"
+    assert result.action == "ALLOWED - REDUCED SIZE"
     assert result.quantity == 5_000
     assert result.position_value == 5_000_000
 
@@ -118,7 +118,7 @@ def test_trade_is_blocked_when_heat_limit_is_already_reached(config, safe_trade)
 
     result = size_proposed_trade(config, positions, safe_trade)
 
-    assert result.action == "BLOCKED — PORTFOLIO HEAT LIMIT"
+    assert result.action == "BLOCKED - PORTFOLIO HEAT LIMIT"
     assert result.quantity == 0
 
 
@@ -132,7 +132,7 @@ def test_trade_is_blocked_for_non_safe_risk_category(config, safe_trade):
 
     result = size_proposed_trade(config, [], proposed)
 
-    assert result.action == "BLOCKED — RISK CATEGORY"
+    assert result.action == "BLOCKED - RISK CATEGORY"
     assert result.quantity == 0
 
 
@@ -146,5 +146,5 @@ def test_trade_is_blocked_when_stop_is_not_below_entry(config, safe_trade):
 
     result = size_proposed_trade(config, [], proposed)
 
-    assert result.action == "BLOCKED — INVALID TRADE"
+    assert result.action == "BLOCKED - INVALID TRADE"
     assert result.quantity == 0

@@ -116,7 +116,7 @@ def _review_required_result() -> PortfolioGateResult:
 
 def _invalid_plan_result(plan_type: str) -> PortfolioGateResult:
     return PortfolioGateResult(
-        action="BLOCKED — INVALID TRADE PLAN",
+        action="BLOCKED - INVALID TRADE PLAN",
         plan_type=plan_type,
         recommended_quantity=0,
         position_value=None,
