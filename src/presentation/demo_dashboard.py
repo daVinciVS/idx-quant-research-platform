@@ -5,7 +5,7 @@ import streamlit as st
 from src.application.public_demo import available_demo_cases, load_demo_case
 from src.presentation.components import (
     render_decision_evidence,
-    render_level_map,
+    render_market_context_chart,
     render_paper_portfolio_sandbox,
     render_plain_english_takeaway,
     render_portfolio_gate,
@@ -46,10 +46,13 @@ def render_demo_dashboard() -> None:
         render_status_strip(case)
         render_plain_english_takeaway(case)
 
-        left_column, right_column = st.columns((1.65, 1), gap="large")
+        left_column, spacer_column, right_column = st.columns(
+            [3.4, 0.25, 1.25],
+            vertical_alignment="top",
+        )
 
         with left_column:
-            render_level_map(case)
+            render_market_context_chart(case)
             st.divider()
             render_decision_evidence(case)
             st.divider()
