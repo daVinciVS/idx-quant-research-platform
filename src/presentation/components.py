@@ -3,6 +3,11 @@ from __future__ import annotations
 import streamlit as st
 
 from src.analytics.decision import DecisionLabel
+from src.application.paper_portfolio import (
+    PaperPortfolioEvaluation,
+    PaperPortfolioInputs,
+    evaluate_paper_portfolio,
+)
 from src.application.public_demo import DemoCase
 from src.presentation.charts import build_trade_plan_level_chart
 from src.presentation.formatters import (
@@ -143,6 +148,198 @@ def render_portfolio_gate(case: DemoCase) -> None:
         for reason in result.reasons[1:]:
             st.markdown(f"- {reason}")
 
+def render_paper_portfolio_sandbox(case: DemoCase) -> None:
+    """Render an in-memory paper-portfolio sizing sandbox."""
+    st.subheader("Paper portfolio sandbox")
+    st.caption(
+        "Change fictional assumptions to see how the existing portfolio-risk "
+        "engine changes the sizing result. Nothing is saved."
+    )
+
+    if case.decision.label != DecisionLabel.CONSIDER_ENTRY:
+        st.info(
+            "This case cannot enter the paper-sizing sandbox because its "
+            "stock-level decision is not CONSIDER ENTRY. Select Consider entry "
+            "or Reduced size from the demo scenarios."
+        )
+        return
+
+    if case.trade_plan is None:
+        st.warning("This case does not include a valid trade plan to size.")
+        return
+
+    with st.form("paper_portfolio_sandbox"):
+        left_column, right_column = st.columns(2)
+
+        with left_column:
+            equity = st.number_input(
+                "Paper equity (Rp)",
+                min_value=1_000_000.0,
+                value=100_000_000.0,
+                step=1_000_000.0,
+                format="%.0f",
+            )
+            available_cash = st.number_input(
+                "Available cash (Rp)",
+                min_value=0.0,
+                value=50_000_000.0,
+                step=1_000_000.0,
+                format="%.0f",
+            )
+            risk_per_trade_pct = st.number_input(
+                "Risk per trade (%)",
+                min_value=0.01,
+                max_value=10.0,
+                value=0.75,
+                step=0.05,
+                format="%.2f",
+            )
+
+        with right_column:
+            max_risk_per_trade_pct = st.number_input(
+                "Maximum risk per trade (%)",
+                min_value=0.01,
+                max_value=10.0,
+                value=1.00,
+                step=0.05,
+                format="%.2f",
+            )
+            max_portfolio_heat_pct = st.number_input(
+                "Maximum portfolio heat (%)",
+                min_value=0.01,
+                max_value=25.0,
+                value=4.00,
+                step=0.25,
+                format="%.2f",
+            )
+            max_position_notional_pct = st.number_input(
+                "Maximum position notional (%)",
+                min_value=0.01,
+                max_value=100.0,
+                value=10.00,
+                step=1.0,
+                format="%.2f",
+            )
+            min_cash_reserve_pct = st.number_input(
+                "Minimum cash reserve (%)",
+                min_value=0.0,
+                max_value=99.0,
+                value=20.00,
+                step=1.0,
+                format="%.2f",
+            )
+
+        plan_type = st.radio(
+            "Trade-plan scenario",
+            options=("PULLBACK", "BREAKOUT"),
+            horizontal=True,
+        )
+        submitted = st.form_submit_button(
+            "Calculate paper position size",
+            type="primary",
+            width="stretch",
+        )
+
+    if not submitted:
+        st.markdown(
+            """
+            <div class="callout">
+                <strong>Try it:</strong> Start with the default assumptions,
+                then reduce available cash or maximum position notional to see
+                how the recommended quantity changes.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    if available_cash > equity:
+        st.error(
+            "Available cash cannot exceed paper equity. Adjust the inputs and "
+            "run the calculation again."
+        )
+        return
+
+    if risk_per_trade_pct > max_risk_per_trade_pct:
+        st.error(
+            "Risk per trade cannot exceed the maximum risk per trade. Adjust "
+            "the inputs and run the calculation again."
+        )
+        return
+
+    inputs = PaperPortfolioInputs(
+        equity=equity,
+        available_cash=available_cash,
+        risk_per_trade_pct=risk_per_trade_pct / 100,
+        max_risk_per_trade_pct=max_risk_per_trade_pct / 100,
+        max_portfolio_heat_pct=max_portfolio_heat_pct / 100,
+        max_position_notional_pct=max_position_notional_pct / 100,
+        min_cash_reserve_pct=min_cash_reserve_pct / 100,
+        lot_size=100,
+    )
+    evaluation = evaluate_paper_portfolio(
+        case=case,
+        inputs=inputs,
+        plan_type=plan_type,
+    )
+
+    _render_sandbox_evaluation(evaluation)
+
+def _render_sandbox_evaluation(
+    evaluation: PaperPortfolioEvaluation,
+) -> None:
+    if not evaluation.eligible or evaluation.result is None:
+        st.warning(evaluation.message)
+        return
+
+    result = evaluation.result
+    action_class = _portfolio_action_class(result.action)
+
+    st.markdown(
+        f"""
+        <div class="panel">
+            <span class="status-badge {action_class}">{result.action}</span>
+            <div class="subtle-copy" style="margin-top: 0.75rem;">
+                {evaluation.message}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    left_column, right_column = st.columns(2)
+
+    with left_column:
+        _render_metric(
+            "Selected plan",
+            evaluation.plan_type,
+            "Trade-plan scenario used for sizing",
+        )
+        _render_metric(
+            "Suggested quantity",
+            format_integer(result.quantity),
+            "Shares; rounded down to IDX 100-share lots",
+        )
+
+    with right_column:
+        _render_metric(
+            "Position value",
+            format_currency_idr(result.position_value),
+            "Illustrative order notional",
+        )
+        _render_metric(
+            "Initial risk / heat",
+            format_currency_idr(result.initial_risk_amount),
+            (
+                f"{format_percent(result.initial_risk_pct)} initial risk | "
+                f"{format_percent(result.projected_portfolio_heat_pct)} "
+                "projected heat"
+            ),
+        )
+
+    st.markdown("### Why this size")
+    for reason in result.reasons:
+        st.markdown(f"- {reason}")
 
 def render_trade_plan_table(case: DemoCase) -> None:
     """Render a compact comparison of pullback and breakout scenarios."""
