@@ -6,6 +6,7 @@ from src.application.public_demo import available_demo_cases, load_demo_case
 from src.presentation.components import (
     render_decision_evidence,
     render_level_map,
+    render_paper_portfolio_sandbox,
     render_plain_english_takeaway,
     render_portfolio_gate,
     render_status_strip,
@@ -37,20 +38,28 @@ def render_demo_dashboard() -> None:
         unsafe_allow_html=True,
     )
 
-    render_status_strip(case)
-    render_plain_english_takeaway(case)
+    research_tab, sandbox_tab = st.tabs(
+        ["Research demo", "Paper portfolio sandbox"]
+    )
 
-    left_column, right_column = st.columns((1.65, 1), gap="large")
+    with research_tab:
+        render_status_strip(case)
+        render_plain_english_takeaway(case)
 
-    with left_column:
-        render_level_map(case)
-        st.divider()
-        render_decision_evidence(case)
-        st.divider()
-        render_trade_plan_table(case)
+        left_column, right_column = st.columns((1.65, 1), gap="large")
 
-    with right_column:
-        render_portfolio_gate(case)
+        with left_column:
+            render_level_map(case)
+            st.divider()
+            render_decision_evidence(case)
+            st.divider()
+            render_trade_plan_table(case)
+
+        with right_column:
+            render_portfolio_gate(case)
+
+    with sandbox_tab:
+        render_paper_portfolio_sandbox(case)
 
     st.markdown(
         """
@@ -99,11 +108,11 @@ def _render_sidebar() -> str:
         st.markdown(
             """
             <div class="sidebar-caption">
-                • Deterministic decision gates<br>
-                • Explainable trade-plan scenarios<br>
-                • Portfolio-aware sizing<br>
-                • IDX 100-share board-lot rules<br>
-                • Read-only research workflow
+                - Deterministic decision gates<br>
+                - Explainable trade-plan scenarios<br>
+                - Portfolio-aware sizing<br>
+                - IDX 100-share board-lot rules<br>
+                - Read-only research workflow
             </div>
             """,
             unsafe_allow_html=True,
