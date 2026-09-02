@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from src.analytics.decision import DecisionLabel
+from src.application.demo_market_data import load_demo_case_ohlcv
 from src.application.paper_portfolio import (
     PaperPortfolioEvaluation,
     PaperPortfolioInputs,
@@ -15,6 +16,7 @@ from src.presentation.formatters import (
     format_integer,
     format_percent,
 )
+from src.presentation.market_chart import build_demo_market_chart
 
 _DECISION_STYLES = {
     DecisionLabel.CONSIDER_ENTRY: ("status-positive", "CONSIDER ENTRY"),
@@ -54,6 +56,33 @@ def render_plain_english_takeaway(case: DemoCase) -> None:
         unsafe_allow_html=True,
     )
 
+def render_market_context_chart(case: DemoCase) -> None:
+    """Render a synthetic OHLCV chart when the selected case has a fixture."""
+    st.subheader("Market context")
+    st.caption(
+        "Synthetic historical-style fixture for UI demonstration. It is not "
+        "live market data, a real ticker, a backtest dataset, or a performance claim."
+    )
+
+    if case.trade_plan is None:
+        st.info(
+            "No market context chart is shown because this case has no valid "
+            "trade plan."
+        )
+        return
+
+    frame = load_demo_case_ohlcv(case.case_id)
+    if frame is None:
+        st.info(
+            "No synthetic market-data fixture is available for this demonstration "
+            "case yet. The decision evidence and trade-plan values remain available."
+        )
+        return
+
+    st.altair_chart(
+        build_demo_market_chart(frame, case.trade_plan),
+        width="stretch",
+    )
 
 def render_level_map(case: DemoCase) -> None:
     """Render the illustrative deterministic trade-plan level chart."""
