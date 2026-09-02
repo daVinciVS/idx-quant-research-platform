@@ -9,3 +9,4 @@ ruff==0.16.4
 matplotlib
 mplfinance
 reportlab
+streamlit
