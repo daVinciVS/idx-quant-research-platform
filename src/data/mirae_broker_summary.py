@@ -60,7 +60,7 @@ def load_mirae_broker_summary(
         start_date=start_date,
         end_date=end_date,
         source="mirae_manual",
-        market="RG",
+        market="ALL",
         investor=normalized_region,
     )
 

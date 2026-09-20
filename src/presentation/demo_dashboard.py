@@ -3,6 +3,9 @@ from __future__ import annotations
 import streamlit as st
 
 from src.application.public_demo import available_demo_cases, load_demo_case
+from src.presentation.broker_flow_components import (
+    render_manual_broker_flow_workspace,
+)
 from src.presentation.components import (
     render_decision_evidence,
     render_market_context_chart,
@@ -38,8 +41,12 @@ def render_demo_dashboard() -> None:
         unsafe_allow_html=True,
     )
 
-    research_tab, sandbox_tab = st.tabs(
-        ["Research demo", "Paper portfolio sandbox"]
+    research_tab, sandbox_tab, broker_flow_tab = st.tabs(
+        [
+            "Research demo",
+            "Paper portfolio sandbox",
+            "Manual broker flow",
+        ]
     )
 
     with research_tab:
@@ -63,6 +70,9 @@ def render_demo_dashboard() -> None:
 
     with sandbox_tab:
         render_paper_portfolio_sandbox(case)
+
+    with broker_flow_tab:
+        render_manual_broker_flow_workspace()
 
     st.markdown(
         """
