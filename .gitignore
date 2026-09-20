@@ -50,13 +50,18 @@ downloads/
 # All local data is private by default
 /data/*
 
-# Re-include only the public, reproducible demo-data path
+# Public, reproducible demo fixtures
 !/data/demo/
 !/data/demo/**
 
+# Public manual-entry template only
+!/data/manual/
+!/data/manual/mirae_broker_summary_manual.example.csv
+
 # Private/local market data and personal portfolio data
 /data/raw/
-/data/manual/
+/data/manual/*
+!/data/manual/mirae_broker_summary_manual.example.csv
 /data/private/
 /data/cache/
 /data/portfolio/
