@@ -52,7 +52,7 @@ def test_loader_aggregates_paired_mirae_rows_by_broker():
     assert result.metadata.ticker == "MDIA"
     assert result.metadata.investor == "all"
     assert result.metadata.source == "mirae_manual"
-    assert result.metadata.market == "RG"
+    assert result.metadata.market == "ALL"
 
 
 def test_loader_filters_by_selected_date_range():
