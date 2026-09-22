@@ -3,6 +3,7 @@ from src.analytics.trade_plan import calculate_trade_plan
 from src.application.demo_market_data import load_demo_ohlcv
 from src.presentation.market_chart import (
     build_demo_market_chart,
+    build_market_chart,
     prepare_market_chart_data,
 )
 
@@ -45,7 +46,9 @@ def test_market_chart_builds_from_valid_fixture_and_trade_plan():
     assert specification["vconcat"][0]["height"] == 420
     assert specification["vconcat"][1]["height"] == 110
     assert len(specification["vconcat"][0]["layer"]) == 6
-    assert "Synthetic OHLCV fixture" in specification["vconcat"][0]["title"]["text"]
+    assert specification["vconcat"][0]["title"]["text"] == (
+        "Synthetic OHLCV fixture daily OHLCV with technical overlays"
+    )
 
 
 def test_prepare_market_chart_data_does_not_mutate_source_frame():
@@ -82,3 +85,20 @@ def test_market_chart_uses_full_number_price_axis_format():
     price_axis = specification["vconcat"][0]["layer"][0]["encoding"]["y"]["axis"]
 
     assert price_axis["format"] == ",.0f"
+
+def test_generic_market_chart_uses_live_ticker_title_and_allows_no_trade_plan():
+    frame = load_demo_ohlcv("demo_entry_setup")
+
+    chart = build_market_chart(
+        frame,
+        ticker="BBCA.JK",
+        trade_plan=None,
+    )
+    specification = chart.to_dict()
+
+    assert specification["vconcat"][0]["height"] == 420
+    assert specification["vconcat"][1]["height"] == 110
+    assert len(specification["vconcat"][0]["layer"]) == 5
+    assert specification["vconcat"][0]["title"]["text"] == (
+        "BBCA.JK daily OHLCV with technical overlays"
+    )
