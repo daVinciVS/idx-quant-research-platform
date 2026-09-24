@@ -10,6 +10,7 @@ from src.application.public_analysis import (
 )
 
 _JAKARTA = ZoneInfo("Asia/Jakarta")
+_AS_OF = datetime(2026, 9, 22, 12, tzinfo=_JAKARTA)
 
 
 def _history(
@@ -36,25 +37,47 @@ def _history(
     )
 
 
-def _loader(history: pd.DataFrame):
+def _history_loader(histories: dict[str, pd.DataFrame]):
     def load(
-        ticker: str,
+        symbol: str,
         *,
         as_of: datetime,
         period: str,
         downloader,
     ) -> pd.DataFrame:
-        del ticker, as_of, period, downloader
-        return history.copy()
+        del as_of, period, downloader
+
+        if symbol not in histories:
+            raise ConnectionError(f"No fake history for {symbol}.")
+
+        return histories[symbol].copy()
 
     return load
 
 
+def _analyze(
+    stock_history: pd.DataFrame,
+    *,
+    benchmark_history: pd.DataFrame | None = None,
+):
+    histories = {"BBCA.JK": stock_history}
+    if benchmark_history is not None:
+        histories["^JKSE"] = benchmark_history
+
+    return analyze_public_ticker(
+        "BBCA",
+        as_of=_AS_OF,
+        history_loader=_history_loader(histories),
+    )
+
+
 def test_live_analysis_returns_public_price_metrics_and_trade_plan():
-    result = analyze_public_ticker(
-        "bbca",
-        as_of=datetime(2026, 9, 22, 12, tzinfo=_JAKARTA),
-        loader=_loader(_history()),
+    result = _analyze(
+        _history(),
+        benchmark_history=_history(
+            start_close=7_000.0,
+            daily_change=2.0,
+        ),
     )
 
     assert result.ticker == "BBCA.JK"
@@ -70,33 +93,77 @@ def test_live_analysis_returns_public_price_metrics_and_trade_plan():
     assert result.trend_template_passed is True
 
 
-def test_live_analysis_is_conservative_without_relative_strength_or_risk_classification():
-    result = analyze_public_ticker(
-        "BBCA.JK",
-        as_of=datetime(2026, 9, 22, 12, tzinfo=_JAKARTA),
-        loader=_loader(_history()),
+def test_live_analysis_calculates_positive_relative_strength_against_ihsg():
+    result = _analyze(
+        _history(daily_change=10.0),
+        benchmark_history=_history(
+            start_close=7_000.0,
+            daily_change=2.0,
+        ),
     )
 
-    assert result.relative_strength_available is False
+    assert result.relative_strength_available is True
+    assert result.stock_return_20d is not None
+    assert result.ihsg_return_20d is not None
+    assert result.relative_strength_spread_20d is not None
+    assert result.relative_strength_positive is True
+    assert result.relative_strength_spread_20d > 0
+    assert "relative strength versus IHSG" in result.data_status
+
+
+def test_live_analysis_calculates_negative_relative_strength_against_ihsg():
+    result = _analyze(
+        _history(daily_change=1.0),
+        benchmark_history=_history(
+            start_close=7_000.0,
+            daily_change=20.0,
+        ),
+    )
+
+    assert result.relative_strength_available is True
+    assert result.relative_strength_positive is False
+    assert result.relative_strength_spread_20d is not None
+    assert result.relative_strength_spread_20d < 0
+
+
+def test_live_analysis_stays_conservative_with_unknown_risk_classification():
+    result = _analyze(
+        _history(),
+        benchmark_history=_history(
+            start_close=7_000.0,
+            daily_change=2.0,
+        ),
+    )
+
     assert result.risk_category == RiskCategory.UNKNOWN
     assert result.decision.label == DecisionLabel.WAIT
     assert any(
         "Risk classification is unavailable" in reason
         for reason in result.decision.reasons
     )
-    assert "IHSG relative strength" in result.data_status
 
 
-def test_live_analysis_returns_insufficient_data_decision_for_short_history():
-    result = analyze_public_ticker(
-        "BBCA",
-        as_of=datetime(2026, 9, 22, 12, tzinfo=_JAKARTA),
-        loader=_loader(_history(rows=49)),
+def test_live_analysis_keeps_stock_result_when_ihsg_is_unavailable():
+    result = _analyze(_history())
+
+    assert result.relative_strength_available is False
+    assert result.stock_return_20d is None
+    assert result.ihsg_return_20d is None
+    assert result.relative_strength_spread_20d is None
+    assert result.relative_strength_positive is None
+    assert "IHSG relative strength is unavailable" in result.data_status
+
+
+def test_live_analysis_returns_insufficient_data_for_short_stock_history():
+    result = _analyze(
+        _history(rows=49),
+        benchmark_history=_history(),
     )
 
     assert result.decision.label == DecisionLabel.INSUFFICIENT_DATA
     assert result.trade_plan is None
     assert result.latest_close is None
+    assert result.relative_strength_available is False
     assert "49 rows available" in result.data_status
 
 
@@ -107,24 +174,26 @@ def test_live_analysis_detects_extended_price():
     history.loc[history.index[-1], "Open"] = 1_995.0
     history.loc[history.index[-1], "Low"] = 1_990.0
 
-    result = analyze_public_ticker(
-        "BBCA",
-        as_of=datetime(2026, 9, 22, 12, tzinfo=_JAKARTA),
-        loader=_loader(history),
+    result = _analyze(
+        history,
+        benchmark_history=_history(
+            start_close=7_000.0,
+            daily_change=2.0,
+        ),
     )
 
     assert result.extension_risk is True
 
 
-def test_live_analysis_wraps_loader_failure():
+def test_live_analysis_wraps_stock_loader_failure():
     def failing_loader(
-        ticker: str,
+        symbol: str,
         *,
         as_of: datetime,
         period: str,
         downloader,
     ) -> pd.DataFrame:
-        del ticker, as_of, period, downloader
+        del symbol, as_of, period, downloader
         raise ConnectionError("network unavailable")
 
     with pytest.raises(
@@ -133,18 +202,21 @@ def test_live_analysis_wraps_loader_failure():
     ):
         analyze_public_ticker(
             "BBCA",
-            as_of=datetime(2026, 9, 22, 12, tzinfo=_JAKARTA),
-            loader=failing_loader,
+            as_of=_AS_OF,
+            history_loader=failing_loader,
         )
 
 
 def test_live_analysis_returns_defensive_history_copy():
     source_history = _history()
+    benchmark_history = _history(
+        start_close=7_000.0,
+        daily_change=2.0,
+    )
 
-    result = analyze_public_ticker(
-        "BBCA",
-        as_of=datetime(2026, 9, 22, 12, tzinfo=_JAKARTA),
-        loader=_loader(source_history),
+    result = _analyze(
+        source_history,
+        benchmark_history=benchmark_history,
     )
     result.history.loc[result.history.index[0], "Close"] = -1.0
 

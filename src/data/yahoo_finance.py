@@ -46,24 +46,26 @@ def normalize_idx_ticker(ticker: str) -> str:
 
     return f"{normalized}.JK"
 
-
-def load_yahoo_daily_ohlcv(
-    ticker: str,
+def load_yahoo_daily_ohlcv_symbol(
+    symbol: str,
     *,
     as_of: datetime,
     period: str = "6mo",
     downloader: YahooDownloader | None = None,
 ) -> pd.DataFrame:
-    """Load validated IDX daily OHLCV history from Yahoo Finance."""
+    """Load validated daily OHLCV history for an already-resolved Yahoo symbol."""
     if as_of.tzinfo is None:
         raise ValueError("as_of must be timezone-aware.")
 
-    normalized_ticker = normalize_idx_ticker(ticker)
+    normalized_symbol = symbol.strip().upper()
+    if not normalized_symbol:
+        raise ValueError("Yahoo symbol must not be blank.")
+
     resolved_downloader = downloader or _default_downloader()
 
     try:
         raw_history = resolved_downloader.download(
-            normalized_ticker,
+            normalized_symbol,
             period=period,
             interval="1d",
             auto_adjust=False,
@@ -72,12 +74,12 @@ def load_yahoo_daily_ohlcv(
         )
     except Exception as error:
         raise YahooFinanceError(
-            f"Yahoo Finance request failed for {normalized_ticker}."
+            f"Yahoo Finance request failed for {normalized_symbol}."
         ) from error
 
     if raw_history.empty:
         raise YahooFinanceError(
-            f"Yahoo Finance returned no daily history for {normalized_ticker}."
+            f"Yahoo Finance returned no daily history for {normalized_symbol}."
         )
 
     try:
@@ -85,7 +87,7 @@ def load_yahoo_daily_ohlcv(
         validated_history = validate_ohlcv(normalized_history)
     except DataContractError as error:
         raise YahooFinanceError(
-            f"Yahoo Finance returned invalid daily history for {normalized_ticker}."
+            f"Yahoo Finance returned invalid daily history for {normalized_symbol}."
         ) from error
 
     complete_history = exclude_incomplete_daily_dataframe(
@@ -95,10 +97,25 @@ def load_yahoo_daily_ohlcv(
 
     if complete_history.empty:
         raise YahooFinanceError(
-            f"No completed daily bars are available for {normalized_ticker}."
+            f"No completed daily bars are available for {normalized_symbol}."
         )
 
     return complete_history
+
+def load_yahoo_daily_ohlcv(
+    ticker: str,
+    *,
+    as_of: datetime,
+    period: str = "6mo",
+    downloader: YahooDownloader | None = None,
+) -> pd.DataFrame:
+    """Load validated IDX daily OHLCV history from Yahoo Finance."""
+    return load_yahoo_daily_ohlcv_symbol(
+        normalize_idx_ticker(ticker),
+        as_of=as_of,
+        period=period,
+        downloader=downloader,
+    )
 
 
 def _default_downloader() -> YahooDownloader:
