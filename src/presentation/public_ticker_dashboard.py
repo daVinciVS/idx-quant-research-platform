@@ -10,7 +10,10 @@ from src.application.public_analysis import (
     PublicAnalysisResult,
     analyze_public_ticker,
 )
-from src.presentation.formatters import format_currency_idr
+from src.presentation.formatters import (
+    format_currency_idr,
+    format_percent,
+)
 from src.presentation.market_chart import build_market_chart
 
 _JAKARTA = ZoneInfo("Asia/Jakarta")
@@ -43,7 +46,7 @@ def render_public_ticker_dashboard() -> None:
     analyze_clicked = st.button(
         "Analyze ticker",
         type="primary",
-        use_container_width=False,
+        width="content",
     )
 
     if not analyze_clicked:
@@ -108,6 +111,25 @@ def _render_public_result(result: PublicAnalysisResult) -> None:
         format_currency_idr(result.six_month_high),
     )
 
+    st.subheader("Public benchmark context")
+    benchmark_columns = st.columns(3)
+    benchmark_columns[0].metric(
+        "Stock 20D return",
+        format_percent(result.stock_return_20d),
+    )
+    benchmark_columns[1].metric(
+        "IHSG 20D return",
+        format_percent(result.ihsg_return_20d),
+    )
+    benchmark_columns[2].metric(
+        "Relative-strength spread",
+        format_percent(result.relative_strength_spread_20d),
+    )
+
+    st.caption(
+        f"IHSG relative strength: {_relative_strength_label(result)}"
+    )
+
     st.divider()
     st.altair_chart(
         build_market_chart(
@@ -115,7 +137,7 @@ def _render_public_result(result: PublicAnalysisResult) -> None:
             ticker=result.ticker,
             trade_plan=result.trade_plan,
         ),
-        use_container_width=True,
+        width="stretch",
     )
 
     left_column, right_column = st.columns([1.3, 1.0], vertical_alignment="top")
@@ -135,7 +157,8 @@ def _render_public_result(result: PublicAnalysisResult) -> None:
     with right_column:
         st.subheader("Public-data limits")
         st.write(
-            "- IHSG relative strength is not yet included in the public result."
+            "- IHSG relative strength uses aligned 20-day public daily closing "
+            "prices for the ticker and benchmark."
         )
         st.write(
             "- Liquidity and risk classification are unavailable in this release."
@@ -145,8 +168,8 @@ def _render_public_result(result: PublicAnalysisResult) -> None:
             "excluded."
         )
         st.write(
-            "- A conservative WAIT / NEUTRAL decision is expected while these "
-            "inputs are unavailable."
+            "- A conservative WAIT / NEUTRAL decision is expected while risk "
+            "classification remains unavailable."
         )
 
     if result.trade_plan is not None:
@@ -185,3 +208,12 @@ def _render_trade_plan(result: PublicAnalysisResult) -> None:
         st.write(f"Target 1: {format_currency_idr(plan.breakout_target_1)}")
         st.write(f"Target 2: {format_currency_idr(plan.breakout_target_2)}")
         st.write(f"Reward/risk: {plan.breakout_rrr:.2f}x")
+
+def _relative_strength_label(result: PublicAnalysisResult) -> str:
+    if not result.relative_strength_available:
+        return "IHSG comparison unavailable"
+
+    if result.relative_strength_positive:
+        return "Outperforming IHSG"
+
+    return "Underperforming IHSG"
