@@ -7,6 +7,7 @@ from src.data.yahoo_finance import (
     YahooFinanceError,
     _normalize_downloaded_history,
     load_yahoo_daily_ohlcv,
+    load_yahoo_daily_ohlcv_symbol,
     normalize_idx_ticker,
 )
 
@@ -101,6 +102,27 @@ def test_normalize_idx_ticker_rejects_invalid_values(ticker):
     with pytest.raises(ValueError):
         normalize_idx_ticker(ticker)
 
+def test_symbol_loader_preserves_benchmark_symbol(valid_history):
+    downloader = FakeYahooDownloader(history=valid_history)
+
+    history = load_yahoo_daily_ohlcv_symbol(
+        "^JKSE",
+        as_of=datetime(2026, 9, 19, 12, tzinfo=_JAKARTA),
+        downloader=downloader,
+    )
+
+    assert len(history) == 3
+    assert downloader.calls[0]["tickers"] == "^JKSE"
+
+
+@pytest.mark.parametrize("symbol", ["", "   "])
+def test_symbol_loader_rejects_blank_symbol(symbol, valid_history):
+    with pytest.raises(ValueError, match="must not be blank"):
+        load_yahoo_daily_ohlcv_symbol(
+            symbol,
+            as_of=datetime(2026, 9, 19, 12, tzinfo=_JAKARTA),
+            downloader=FakeYahooDownloader(history=valid_history),
+        )
 
 def test_loader_normalizes_ticker_and_returns_valid_daily_history(
     valid_history,
