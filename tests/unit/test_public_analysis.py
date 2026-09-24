@@ -126,7 +126,7 @@ def test_live_analysis_calculates_negative_relative_strength_against_ihsg():
     assert result.relative_strength_spread_20d < 0
 
 
-def test_live_analysis_stays_conservative_with_unknown_risk_classification():
+def test_live_analysis_classifies_safe_execution_conditions():
     result = _analyze(
         _history(),
         benchmark_history=_history(
@@ -135,12 +135,12 @@ def test_live_analysis_stays_conservative_with_unknown_risk_classification():
         ),
     )
 
-    assert result.risk_category == RiskCategory.UNKNOWN
-    assert result.decision.label == DecisionLabel.WAIT
-    assert any(
-        "Risk classification is unavailable" in reason
-        for reason in result.decision.reasons
-    )
+    assert result.risk_category == RiskCategory.SAFE
+    assert result.average_traded_value_20d is not None
+    assert result.atr_percent is not None
+    assert result.zero_volume_days_20d == 0
+    assert result.volume_stability_20d is not None
+    assert result.execution_risk_reasons
 
 
 def test_live_analysis_keeps_stock_result_when_ihsg_is_unavailable():
@@ -151,7 +151,9 @@ def test_live_analysis_keeps_stock_result_when_ihsg_is_unavailable():
     assert result.ihsg_return_20d is None
     assert result.relative_strength_spread_20d is None
     assert result.relative_strength_positive is None
-    assert "IHSG relative strength is unavailable" in result.data_status
+    assert "without an available IHSG relative-strength comparison" in (
+        result.data_status
+    )
 
 
 def test_live_analysis_returns_insufficient_data_for_short_stock_history():
@@ -165,6 +167,9 @@ def test_live_analysis_returns_insufficient_data_for_short_stock_history():
     assert result.latest_close is None
     assert result.relative_strength_available is False
     assert "49 rows available" in result.data_status
+    assert result.risk_category == RiskCategory.UNKNOWN
+    assert result.average_traded_value_20d is None
+    assert result.execution_risk_reasons
 
 
 def test_live_analysis_detects_extended_price():
@@ -221,3 +226,38 @@ def test_live_analysis_returns_defensive_history_copy():
     result.history.loc[result.history.index[0], "Close"] = -1.0
 
     assert source_history["Close"].iloc[0] == 1_000.0
+
+def test_live_analysis_avoids_zero_volume_execution_conditions():
+    history = _history()
+    history.loc[history.index[-1], "Volume"] = 0
+
+    result = _analyze(
+        history,
+        benchmark_history=_history(
+            start_close=7_000.0,
+            daily_change=2.0,
+        ),
+    )
+
+    assert result.risk_category == RiskCategory.EXTREME
+    assert result.decision.label == DecisionLabel.AVOID
+    assert result.zero_volume_days_20d == 1
+    assert any(
+        "zero-volume" in reason
+        for reason in result.execution_risk_reasons
+    )
+
+def test_live_analysis_watchlists_moderate_execution_conditions():
+    history = _history()
+    history["Volume"] = 500_000.0
+
+    result = _analyze(
+        history,
+        benchmark_history=_history(
+            start_close=7_000.0,
+            daily_change=2.0,
+        ),
+    )
+
+    assert result.risk_category == RiskCategory.MODERATE
+    assert result.decision.label == DecisionLabel.WATCHLIST

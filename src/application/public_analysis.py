@@ -12,6 +12,10 @@ from src.analytics.decision import (
     TradeDecision,
     evaluate_trade_decision,
 )
+from src.analytics.public_execution_risk import (
+    PublicExecutionRisk,
+    classify_public_execution_risk,
+)
 from src.analytics.trade_plan import TradePlan, calculate_trade_plan
 from src.data.yahoo_finance import (
     YahooDownloader,
@@ -58,6 +62,11 @@ class PublicAnalysisResult:
     ihsg_return_20d: float | None
     relative_strength_spread_20d: float | None
     relative_strength_positive: bool | None
+    average_traded_value_20d: float | None
+    atr_percent: float | None
+    zero_volume_days_20d: int | None
+    volume_stability_20d: float | None
+    execution_risk_reasons: tuple[str, ...]
     risk_category: RiskCategory
     decision: TradeDecision
     trade_plan: TradePlan | None
@@ -137,6 +146,11 @@ def _build_public_analysis(
         )
 
     metrics = _calculate_price_metrics(frame)
+    execution_risk = classify_public_execution_risk(
+        frame,
+        atr14=metrics.atr14,
+        latest_close=metrics.latest_close,
+    )
     trade_plan = _calculate_optional_trade_plan(metrics)
     relative_strength = _load_relative_strength(
         stock_history=frame,
@@ -156,7 +170,7 @@ def _build_public_analysis(
             risk_reward_ratio=(
                 trade_plan.pullback_rrr if trade_plan is not None else None
             ),
-            risk_category=RiskCategory.UNKNOWN,
+            risk_category=execution_risk.category,
         )
     )
 
@@ -178,10 +192,15 @@ def _build_public_analysis(
         ihsg_return_20d=relative_strength.ihsg_return_20d,
         relative_strength_spread_20d=relative_strength.spread_20d,
         relative_strength_positive=relative_strength.positive,
-        risk_category=RiskCategory.UNKNOWN,
+        average_traded_value_20d=execution_risk.average_traded_value_20d,
+        atr_percent=execution_risk.atr_percent,
+        zero_volume_days_20d=execution_risk.zero_volume_days_20d,
+        volume_stability_20d=execution_risk.volume_stability_20d,
+        execution_risk_reasons=execution_risk.reasons,
+        risk_category=execution_risk.category,
         decision=decision,
         trade_plan=trade_plan,
-        data_status=_data_status(relative_strength),
+        data_status=_data_status(relative_strength, execution_risk),
     )
 
 
@@ -221,6 +240,14 @@ def _insufficient_history_result(
         ihsg_return_20d=None,
         relative_strength_spread_20d=None,
         relative_strength_positive=None,
+        average_traded_value_20d=None,
+        atr_percent=None,
+        zero_volume_days_20d=None,
+        volume_stability_20d=None,
+        execution_risk_reasons=(
+            "Execution-risk classification is unavailable because stock "
+            "history is insufficient.",
+        ),
         risk_category=RiskCategory.UNKNOWN,
         decision=decision,
         trade_plan=None,
@@ -310,16 +337,21 @@ def _unavailable_relative_strength() -> _RelativeStrengthMetrics:
     )
 
 
-def _data_status(relative_strength: _RelativeStrengthMetrics) -> str:
-    if relative_strength.available:
-        return (
-            "Validated public daily OHLCV with 20-day relative strength versus "
-            "IHSG. Broker flow and liquidity risk classification are not included."
-        )
+def _data_status(
+    relative_strength: _RelativeStrengthMetrics,
+    execution_risk: PublicExecutionRisk,
+) -> str:
+    relative_strength_status = (
+        "with 20-day relative strength versus IHSG"
+        if relative_strength.available
+        else "without an available IHSG relative-strength comparison"
+    )
 
     return (
-        "Validated public daily OHLCV. IHSG relative strength is unavailable; "
-        "broker flow and liquidity risk classification are not included."
+        f"Validated public daily OHLCV {relative_strength_status}. "
+        "Public OHLCV execution-risk classification: "
+        f"{execution_risk.category.value}. "
+        "Broker flow is not included."
     )
 
 
